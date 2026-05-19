@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>PILLAR · GloBE/DAC9</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans:wght@300;400;600&family=Noto+Sans+Mono:wght@400&display=swap" rel="stylesheet"/>
+  <style>
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+    :root{--blue:#00338D;--blue-md:#005EB8;--teal:#00B2A9;--yellow:#EAAA00;--white:#fff;--gray:#F5F5F5;--border:#D9D9D9;--muted:#767676;--dark:#1A1A1A;--sans:'Noto Sans',sans-serif;--mono:'Noto Sans Mono',monospace}
+    html,body{height:100%;font-family:var(--sans);background:var(--gray);color:var(--dark)}
+    body{display:grid;grid-template-rows:64px 1fr 44px;min-height:100vh}
+
+    /* Header */
+    header{background:var(--blue);display:flex;align-items:center;justify-content:space-between;padding:0 32px;position:relative}
+    header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:3px;background:var(--yellow)}
+    .logo{display:flex;align-items:center;gap:12px}
+    .logo svg{height:24px;width:auto}
+    .logo-sep{width:1px;height:20px;background:rgba(255,255,255,0.2)}
+    .logo-name{font-size:0.88rem;font-weight:300;color:rgba(255,255,255,0.85);letter-spacing:0.06em}
+    .logo-name strong{font-weight:600;color:#fff}
+    .hright{display:flex;align-items:center;gap:14px}
+    .huser{font-size:0.75rem;color:rgba(255,255,255,0.7)}
+    .hbadge{font-size:0.65rem;font-weight:600;color:var(--blue);background:var(--yellow);padding:3px 10px;border-radius:2px;letter-spacing:0.06em}
+    .hlogout{font-size:0.72rem;color:rgba(255,255,255,0.6);text-decoration:none;border:1px solid rgba(255,255,255,0.2);padding:4px 12px;border-radius:2px;transition:all 0.15s}
+    .hlogout:hover{color:#fff;border-color:rgba(255,255,255,0.5)}
+
+    /* Main */
+    main{padding:24px 32px;display:flex;flex-direction:column;gap:16px;max-width:900px;margin:0 auto;width:100%}
+
+    /* Card */
+    .card{background:var(--white);border:1px solid var(--border);border-radius:4px}
+    .card-head{padding:13px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
+    .card-title{font-size:0.75rem;font-weight:600;color:var(--blue);text-transform:uppercase;letter-spacing:0.1em;display:flex;align-items:center;gap:8px}
+    .card-title::before{content:'';display:block;width:3px;height:14px;background:var(--yellow);border-radius:2px}
+    .card-body{padding:20px}
+
+    /* CF field */
+    .field label{display:block;font-size:0.72rem;color:var(--muted);margin-bottom:5px}
+    .field input{padding:8px 12px;border:1px solid var(--border);border-radius:3px;font-family:var(--mono);font-size:0.85rem;color:var(--dark);outline:none;transition:border-color 0.15s;width:280px}
+    .field input:focus{border-color:var(--blue)}
+    .field input::placeholder{color:var(--border)}
+
+    /* Drop zone */
+    .drop{border:2px dashed var(--border);border-radius:4px;padding:28px 20px;text-align:center;cursor:pointer;position:relative;transition:all 0.15s;background:var(--gray);margin-top:14px}
+    .drop:hover,.drop.over{border-color:var(--blue);background:rgba(0,51,141,0.03)}
+    .drop input{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%}
+    .drop-icon{font-size:1.6rem;margin-bottom:6px;opacity:0.4}
+    .drop-text{font-size:0.85rem;color:var(--muted)}
+    .drop-text strong{color:var(--blue)}
+    .drop-hint{font-size:0.7rem;color:var(--border);margin-top:3px}
+
+    /* File list */
+    .flist{display:flex;flex-direction:column;gap:5px;margin-top:10px}
+    .fitem{display:flex;align-items:center;gap:10px;background:var(--gray);border:1px solid var(--border);border-radius:3px;padding:6px 12px;font-family:var(--mono);font-size:0.72rem}
+    .fitem .fn{flex:1;color:var(--dark)}
+    .fitem .fs{color:var(--muted)}
+    .fitem .fx{color:#c00;cursor:pointer;padding:0 4px;opacity:0.6}
+    .fitem .fx:hover{opacity:1}
+
+    /* Buttons */
+    .brow{display:flex;gap:10px;margin-top:14px}
+    .btn{display:inline-flex;align-items:center;gap:8px;padding:9px 20px;border-radius:3px;border:none;font-family:var(--sans);font-size:0.83rem;font-weight:600;cursor:pointer;transition:all 0.15s}
+    .btn-p{background:var(--blue);color:#fff}
+    .btn-p:hover:not(:disabled){background:var(--blue-md)}
+    .btn-p:disabled{opacity:0.35;cursor:not-allowed}
+    .btn-g{background:transparent;color:var(--muted);border:1px solid var(--border)}
+    .btn-g:hover{border-color:var(--blue);color:var(--blue)}
+
+    /* Steps */
+    .steps{display:flex;border:1px solid var(--border);border-radius:3px;overflow:hidden}
+    .step{flex:1;padding:9px 14px;text-align:center;border-right:1px solid var(--border);font-size:0.7rem;color:var(--muted);background:var(--gray);transition:all 0.2s}
+    .step:last-child{border-right:none}
+    .step.done{background:#E6F6F5;color:#006B65}
+    .step.active{background:#E6EEF9;color:var(--blue)}
+    .step.error{background:#FCE8E8;color:#B00}
+    .step-n{font-weight:600;font-size:0.78rem;margin-bottom:2px}
+
+    /* Progress */
+    .prog{display:none}
+    .prog.on{display:block}
+    .sbadge{display:inline-flex;align-items:center;gap:6px;font-size:0.72rem;font-weight:600;padding:3px 12px;border-radius:100px}
+    .sbadge.PENDING{background:#FFF8E6;color:#B07800}
+    .sbadge.RUNNING{background:#E6EEF9;color:var(--blue)}
+    .sbadge.COMPLETED{background:#E6F6F5;color:#006B65}
+    .sbadge.FAILED{background:#FCE8E8;color:#B00}
+    .spin{width:10px;height:10px;border:2px solid currentColor;border-top-color:transparent;border-radius:50%;animation:spin 0.7s linear infinite}
+    @keyframes spin{to{transform:rotate(360deg)}}
+    .logbox{background:#1A1A2E;border-radius:3px;padding:12px 14px;font-family:var(--mono);font-size:0.7rem;color:#A8B0C0;max-height:150px;overflow-y:auto;line-height:1.8;white-space:pre-wrap;margin-top:12px}
+
+    /* Outputs */
+    .ogrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:10px;margin-top:14px}
+    .ocard{background:var(--gray);border:1px solid var(--border);border-radius:3px;padding:13px 15px;display:flex;flex-direction:column;gap:5px}
+    .otype{font-size:0.62rem;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--teal)}
+    .oname{font-family:var(--mono);font-size:0.7rem;color:var(--dark);word-break:break-all;line-height:1.4}
+    .odl{display:inline-flex;align-items:center;gap:5px;margin-top:4px;font-size:0.78rem;font-weight:600;color:var(--blue);text-decoration:none}
+    .odl:hover{text-decoration:underline}
+
+    /* Footer */
+    footer{background:var(--white);border-top:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;padding:0 32px;font-size:0.68rem;color:var(--muted)}
+    .fdot{width:5px;height:5px;border-radius:50%;background:var(--teal);display:inline-block;margin-right:7px;animation:pulse 2s infinite}
+    @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.3}}
+  </style>
+</head>
+<body>
+<header>
+  <div class="logo">
+    <svg viewBox="0 0 96 28" fill="none" aria-label="KPMG">
+      <rect x="0" y="0" width="8" height="28" fill="white"/>
+      <polygon points="8,14 20,0 14,0 8,8" fill="white"/>
+      <polygon points="8,14 20,28 14,28 8,20" fill="white"/>
+      <rect x="24" y="0" width="8" height="28" fill="white"/>
+      <path d="M32,0 Q44,0 44,7 Q44,14 32,14 Z" fill="white"/>
+      <rect x="48" y="0" width="8" height="28" fill="white"/>
+      <rect x="68" y="0" width="8" height="28" fill="white"/>
+      <polygon points="48,0 62,14 76,0" fill="white"/>
+      <path d="M80,14 A12,14 0 1,1 92,14 L86,14 L86,19 L92,19 L92,14" stroke="white" stroke-width="8" fill="none" stroke-linejoin="round"/>
+    </svg>
+    <div class="logo-sep"></div>
+    <div class="logo-name"><strong>PILLAR</strong> · GloBE/DAC9</div>
+  </div>
+  <div class="hright">
+    {% if current_user %}<span class="huser">{{ current_user.name }}</span>{% endif %}
+    <span class="hbadge">GIR26</span>
+    <a href="/auth/logout" class="hlogout">Esci</a>
+  </div>
+</header>
+
+<main>
+  <!-- Upload card -->
+  <div class="card">
+    <div class="card-head">
+      <div class="card-title">Elabora file GloBE XML</div>
+    </div>
+    <div class="card-body">
+      <div class="field">
+        <label for="cf">Codice Fiscale Fornitore</label>
+        <input type="text" id="cf" placeholder="11 cifre o 16 alfanum" value="{{ default_cf }}" maxlength="16" style="text-transform:uppercase"/>
+      </div>
+      <div class="drop" id="drop">
+        <input type="file" id="fi" accept=".xml" multiple/>
+        <div class="drop-icon">📂</div>
+        <div class="drop-text"><strong>Trascina i file XML</strong> o clicca per selezionare</div>
+        <div class="drop-hint">File .xml · Singolo o batch · Max 50 MB</div>
+      </div>
+      <div class="flist" id="flist"></div>
+      <div class="brow">
+        <button class="btn btn-p" id="btnGo" disabled onclick="go()">▶ Avvia elaborazione</button>
+        <button class="btn btn-g" onclick="reset()">Cancella</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Steps -->
+  <div class="steps">
+    <div class="step" id="s1"><div class="step-n">01</div>Validazione AdE</div>
+    <div class="step" id="s2"><div class="step-n">02</div>Shell MSG</div>
+    <div class="step" id="s3"><div class="step-n">03</div>Report HTML</div>
+  </div>
+
+  <!-- Progress -->
+  <div class="prog" id="prog">
+    <div class="card">
+      <div class="card-head">
+        <div class="card-title">Esecuzione</div>
+        <div style="display:flex;align-items:center;gap:10px">
+          <div class="sbadge PENDING" id="badge"><span class="spin" id="spin"></span><span id="btext">In attesa...</span></div>
+          <span id="el" style="font-size:0.72rem;color:var(--muted)"></span>
+        </div>
+      </div>
+      <div class="card-body">
+        <div class="logbox" id="log"></div>
+        <div id="outs" style="display:none">
+          <div style="margin-top:14px;font-size:0.72rem;font-weight:600;color:var(--blue);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:8px">File prodotti — scarica subito</div>
+          <div class="ogrid" id="ogrid"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<footer>
+  <div><span class="fdot"></span>Azure North Europe · operativo</div>
+  <div>KPMG Advisory S.p.A. · uso interno riservato</div>
+  <div id="ts"></div>
+</footer>
+
+<script>
+let files=[],jid=null,poll=null,llen=0;
+const drop=document.getElementById('drop'),fi=document.getElementById('fi'),flist=document.getElementById('flist'),btn=document.getElementById('btnGo');
+
+drop.addEventListener('dragover',e=>{e.preventDefault();drop.classList.add('over')});
+drop.addEventListener('dragleave',()=>drop.classList.remove('over'));
+drop.addEventListener('drop',e=>{e.preventDefault();drop.classList.remove('over');add([...e.dataTransfer.files])});
+fi.addEventListener('change',()=>{add([...fi.files]);fi.value=''});
+
+function add(f){files=[...files,...f.filter(x=>x.name.toLowerCase().endsWith('.xml'))];render();}
+function rem(i){files.splice(i,1);render();}
+function reset(){files=[];render();}
+function render(){
+  flist.innerHTML=files.map((f,i)=>`<div class="fitem"><span>📄</span><span class="fn">${f.name}</span><span class="fs">${(f.size/1024).toFixed(1)} KB</span><span class="fx" onclick="rem(${i})">✕</span></div>`).join('');
+  btn.disabled=files.length===0;
+}
+
+async function go(){
+  const cf=document.getElementById('cf').value.trim().toUpperCase();
+  if(!cf){alert('Inserire il Codice Fiscale');return;}
+  const fd=new FormData();
+  fd.append('codice_fiscale',cf);
+  files.forEach(f=>fd.append('xml_files',f));
+  btn.disabled=true;
+  document.getElementById('prog').classList.add('on');
+  document.getElementById('log').textContent='';
+  document.getElementById('outs').style.display='none';
+  llen=0;
+  setBadge('PENDING');
+  ['s1','s2','s3'].forEach(id=>document.getElementById(id).className='step');
+  try{
+    const r=await fetch('/upload',{method:'POST',body:fd});
+    const d=await r.json();
+    if(!r.ok){alert(d.error||'Errore');btn.disabled=false;return;}
+    jid=d.job_id;
+    addLog('Job avviato: '+d.files.join(', '));
+    llen=1;
+    if(poll)clearInterval(poll);
+    poll=setInterval(tick,2000);
+  }catch(e){alert('Errore rete: '+e.message);btn.disabled=false;}
+}
+
+async function tick(){
+  try{
+    const d=await(await fetch('/status/'+jid)).json();
+    setBadge(d.status);
+    if(d.elapsed)document.getElementById('el').textContent=d.elapsed+'s';
+    d.log.slice(llen).forEach(l=>addLog(l));
+    llen=d.log.length;
+    // Step tracker
+    const j=d.log.join('\n');
+    if(j.includes('Step 1'))setStep('s1',j.includes('✓')&&j.indexOf('✓')>j.indexOf('Step 1')?'done':'active');
+    if(j.includes('Step 2'))setStep('s2',j.includes('Shell')&&j.lastIndexOf('✓')>j.indexOf('Step 2')?'done':'active');
+    if(j.includes('Step 3'))setStep('s3',j.includes('Report')&&j.lastIndexOf('✓')>j.indexOf('Step 3')?'done':'active');
+    if(d.status==='COMPLETED'||d.status==='FAILED'){
+      clearInterval(poll);btn.disabled=false;
+      if(d.outputs&&d.outputs.length)showOut(jid,d.outputs);
+      if(d.error)addLog('ERRORE: '+d.error);
+    }
+  }catch(e){console.error(e);}
+}
+
+function addLog(l){const b=document.getElementById('log');b.textContent+=l+'\n';b.scrollTop=b.scrollHeight;}
+function setBadge(s){
+  const b=document.getElementById('badge'),t=document.getElementById('btext'),sp=document.getElementById('spin');
+  b.className='sbadge '+s;
+  t.textContent={PENDING:'In attesa',RUNNING:'In esecuzione',COMPLETED:'Completato',FAILED:'Errore'}[s]||s;
+  sp.style.display=(s==='RUNNING'||s==='PENDING')?'block':'none';
+}
+function setStep(id,c){document.getElementById(id).className='step '+c;}
+function showOut(jid,outs){
+  const icons={'Validazione':'✅','Shell':'📦','Report':'📊'};
+  document.getElementById('ogrid').innerHTML=outs.map(o=>{
+    const icon=Object.entries(icons).find(([k])=>o.label.includes(k))?.[1]||'📄';
+    const type=o.label.includes('Shell')?'Shell MSG':o.label.includes('Validazione')?'Validazione XLSX':'Report HTML';
+    return`<div class="ocard"><div class="otype">${icon} ${type}</div><div class="oname">${o.filename}</div><a class="odl" href="/download/${jid}/${encodeURIComponent(o.filename)}" download>⬇ Scarica</a></div>`;
+  }).join('');
+  document.getElementById('outs').style.display='block';
+}
+function pad(n){return String(n).padStart(2,'0');}
+(function tick(){const d=new Date();document.getElementById('ts').textContent=pad(d.getDate())+'/'+pad(d.getMonth()+1)+'/'+d.getFullYear()+' '+pad(d.getHours())+':'+pad(d.getMinutes());setTimeout(tick,30000);})();
+</script>
+</body>
+</html>

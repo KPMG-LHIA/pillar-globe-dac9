@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Dati locali
+uploads/
+results/
+
+# Deploy
+*.zip
+deploy/*.zip
+
+# Variabili d'ambiente
+.env
