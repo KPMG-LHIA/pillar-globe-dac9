@@ -11,7 +11,7 @@ import msal
 from flask import Flask, redirect, render_template, request, send_file, session, url_for, jsonify, abort
 from werkzeug.middleware.proxy_fix import ProxyFix
 
-# ── Config ──────────────────────────────────────────────────────────────────
+# ── Config  ──────────────────────────────────────────────────────────────────
 BASE_DIR    = Path(__file__).parent
 UPLOAD_DIR  = BASE_DIR / "uploads"
 RESULTS_DIR = BASE_DIR / "results"
