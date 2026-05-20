@@ -1,8 +1,9 @@
 """
 app.py - PILLAR GloBE/DAC9
 Flusso: apri sito → Microsoft login automatico → home upload
+Supporta upload multi-CF: ogni file XML può avere un CF fornitore differente.
 """
-import os, threading, time, traceback, uuid
+import os, threading, time, uuid, json
 from datetime import timedelta
 from functools import wraps
 from pathlib import Path
@@ -11,7 +12,7 @@ import msal
 from flask import Flask, redirect, render_template, request, send_file, session, url_for, jsonify, abort
 from werkzeug.middleware.proxy_fix import ProxyFix
 
-# ── Config  ──────────────────────────────────────────────────────────────────
+# ── Config ──────────────────────────────────────────────────────────────────
 BASE_DIR    = Path(__file__).parent
 UPLOAD_DIR  = BASE_DIR / "uploads"
 RESULTS_DIR = BASE_DIR / "results"
@@ -23,7 +24,7 @@ RESULTS_DIR.mkdir(exist_ok=True)
 CLIENT_ID     = os.getenv("AZURE_AD_CLIENT_ID", "")
 CLIENT_SECRET = os.getenv("AZURE_AD_CLIENT_SECRET", "")
 TENANT_ID     = os.getenv("AZURE_TENANT_ID", "")
-AUTHORITY     = "https://login.microsoftonline.com/organizations"  # multitenant: accetta qualsiasi tenant aziendale
+AUTHORITY     = "https://login.microsoftonline.com/organizations"
 SCOPE         = ["User.Read"]
 
 app = Flask(__name__)
@@ -44,7 +45,6 @@ def login_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
         if not session.get("user"):
-            # Nessuna pagina intermedia — redirect diretto a Microsoft
             if CLIENT_ID:
                 session["next"] = request.url
                 flow = _msal_app().initiate_auth_code_flow(
@@ -54,7 +54,6 @@ def login_required(f):
                 session["flow"] = flow
                 return redirect(flow["auth_uri"])
             else:
-                # Sviluppo locale senza credenziali: bypass
                 session["user"] = {"name": "Dev Locale", "email": "dev@localhost"}
         return f(*args, **kwargs)
     return decorated
@@ -110,7 +109,11 @@ LOCK = threading.Lock()
 def new_job(files):
     jid = str(uuid.uuid4())
     with LOCK:
-        JOBS[jid] = {"status": "PENDING", "files": files, "outputs": [], "log": [], "error": None, "t0": time.time(), "t1": None}
+        JOBS[jid] = {
+            "status": "PENDING", "files": files,
+            "outputs": [], "log": [], "error": None,
+            "t0": time.time(), "t1": None,
+        }
     return jid
 
 def update_job(jid, **kw):
@@ -124,7 +127,11 @@ def get_job(jid):
 
 # ── Pipeline worker ───────────────────────────────────────────────────────────
 
-def run_pipeline(jid, xml_paths, cf):
+def run_pipeline(jid, items):
+    """
+    items: list of (xml_path: Path, cf: str)
+    Each item is processed independently with its own CF.
+    """
     from services.xml_validator import validate
     from services.shell_telematico import encapsulate
     from services.report_viewer import generate_report
@@ -133,15 +140,15 @@ def run_pipeline(jid, xml_paths, cf):
     outputs = []
 
     try:
-        for xp in xml_paths:
+        for xp, cf in items:
             out_dir = RESULTS_DIR / xp.stem
             out_dir.mkdir(parents=True, exist_ok=True)
-            log_job(jid, f"▶ {xp.name}")
+            log_job(jid, f"▶ {xp.name}  (CF: {cf})")
 
             for label, fn, kw in [
-                ("Step 1 – Validazione",    validate,        {"output_dir": out_dir}),
-                ("Step 2 – Shell MSG",      encapsulate,     {"codice_fiscale": cf, "output_dir": out_dir, "archive_source": False}),
-                ("Step 3 – Report HTML",    generate_report, {"output_dir": out_dir}),
+                ("Step 1 – Validazione",  validate,        {"output_dir": out_dir}),
+                ("Step 2 – Shell MSG",    encapsulate,     {"codice_fiscale": cf, "output_dir": out_dir, "archive_source": False}),
+                ("Step 3 – Report HTML",  generate_report, {"output_dir": out_dir}),
             ]:
                 try:
                     log_job(jid, f"  {label}...")
@@ -149,7 +156,11 @@ def run_pipeline(jid, xml_paths, cf):
                         r = fn(xml_path=xp, **kw)
                     else:
                         r = fn(xp, **kw)
-                    outputs.append({"label": f"[{xp.stem}] {label[9:]}", "filename": r.name, "path": str(r)})
+                    outputs.append({
+                        "label": f"[{xp.stem}] {label[9:]}",
+                        "filename": r.name,
+                        "path": str(r),
+                    })
                     log_job(jid, f"  ✓ {r.name}")
                 except Exception as e:
                     log_job(jid, f"  ✗ {label}: {e}")
@@ -171,42 +182,72 @@ def index():
 @app.route("/upload", methods=["POST"])
 @login_required
 def upload():
-    files = request.files.getlist("xml_files")
-    cf    = request.form.get("codice_fiscale", DEFAULT_CF).strip().upper()
+    files   = request.files.getlist("xml_files")
+    cf_map  = request.form.getlist("cf_map")   # parallel list: cf_map[i] → files[i]
+
     if not files or all(f.filename == "" for f in files):
         return jsonify({"error": "Nessun file XML"}), 400
-    if not cf:
-        return jsonify({"error": "Codice Fiscale obbligatorio"}), 400
-    saved = []
-    for f in files:
-        if not f.filename: continue
+
+    # Validate and resolve CF per file
+    items = []   # (Path, cf)
+    saved_names = []
+
+    for i, f in enumerate(files):
+        if not f.filename:
+            continue
         name = Path(f.filename).name
         if not name.lower().endswith(".xml"):
             return jsonify({"error": f"Solo file .xml ({name})"}), 400
+
+        # Pick CF: use cf_map if provided and long enough, else DEFAULT_CF
+        cf = cf_map[i].strip().upper() if i < len(cf_map) else DEFAULT_CF
+        if len(cf) < 10:
+            return jsonify({"error": f"CF non valido per il file '{name}': '{cf}'"}), 400
+
         dest = UPLOAD_DIR / name
         f.save(str(dest))
-        saved.append({"name": name, "path": str(dest)})
-    if not saved:
+        items.append((dest, cf))
+        saved_names.append(name)
+
+    if not items:
         return jsonify({"error": "Nessun file valido"}), 400
-    jid = new_job(saved)
-    threading.Thread(target=run_pipeline, args=(jid, [Path(s["path"]) for s in saved], cf), daemon=True).start()
-    return jsonify({"job_id": jid, "files": [s["name"] for s in saved]}), 202
+
+    jid = new_job([{"name": n} for n in saved_names])
+    threading.Thread(
+        target=run_pipeline,
+        args=(jid, [(Path(p), cf) for p, cf in items]),
+        daemon=True,
+    ).start()
+    return jsonify({"job_id": jid, "files": saved_names}), 202
 
 @app.route("/status/<jid>")
 @login_required
 def status(jid):
     j = get_job(jid)
-    if not j: return jsonify({"error": "Job non trovato"}), 404
+    if not j:
+        return jsonify({"error": "Job non trovato"}), 404
     elapsed = round(j["t1"] - j["t0"], 1) if j["t1"] else None
-    return jsonify({"job_id": jid, "status": j["status"], "log": j["log"], "outputs": j["outputs"], "error": j["error"], "elapsed": elapsed})
+    return jsonify({
+        "job_id": jid,
+        "status": j["status"],
+        "log": j["log"],
+        "outputs": j["outputs"],
+        "error": j["error"],
+        "elapsed": elapsed,
+    })
 
 @app.route("/download/<jid>/<filename>")
 @login_required
 def download(jid, filename):
     j = get_job(jid)
-    if not j: abort(404)
-    target = next((Path(o["path"]) for o in j["outputs"] if o["filename"] == filename), None)
-    if not target or not target.exists(): abort(404)
+    if not j:
+        abort(404)
+    target = next(
+        (Path(o["path"]) for o in j["outputs"] if o["filename"] == filename),
+        None,
+    )
+    if not target or not target.exists():
+        abort(404)
     return send_file(str(target), as_attachment=True, download_name=filename)
 
 if __name__ == "__main__":
