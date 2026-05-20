@@ -727,7 +727,7 @@ def validate(xml_path: Path, output_dir: Path | None = None, xsd_dir: Path | Non
     xml_path = Path(xml_path)
     if output_dir is None: output_dir = xml_path.parent
     output_dir = Path(output_dir); output_dir.mkdir(parents=True, exist_ok=True)
-    out_path = output_dir / "validation_report.xlsx"
+    out_path = output_dir / f"{xml_path.stem}_validation_report.xlsx"
 
     # Parse XML
     try:
