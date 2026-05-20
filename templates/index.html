@@ -53,6 +53,12 @@
     .batch-cf{width:100%;padding:6px 10px;border:1px solid var(--border);border-radius:3px;font-family:var(--mono);font-size:0.82rem;color:var(--dark);outline:none;transition:border-color 0.15s;text-transform:uppercase}
     .batch-cf:focus{border-color:var(--blue)}
     .batch-cf::placeholder{color:#bbb}
+    .batch-cf.valid{border-color:var(--green);background:#f6fffe}
+    .batch-cf.invalid{border-color:var(--red);background:#fff8f8}
+    .cf-hint{font-size:0.62rem;margin-top:3px;height:14px;display:flex;align-items:center;gap:4px;transition:color 0.15s}
+    .cf-hint.ok{color:var(--green)}
+    .cf-hint.err{color:var(--red)}
+    .cf-hint.neutral{color:var(--muted)}
     .batch-del{background:none;border:none;color:#bbb;cursor:pointer;font-size:1rem;padding:4px 6px;border-radius:2px;transition:color 0.15s;line-height:1}
     .batch-del:hover{color:var(--red)}
 
@@ -232,6 +238,7 @@ function removeFile(batchId, fileIdx) {
 function updateCf(id, val) {
   const b = getBatch(id);
   if (b) b.cf = val.toUpperCase();
+  updateCfHint(id, val.toUpperCase());
   checkReady();
 }
 
@@ -244,12 +251,13 @@ function renderBatches() {
         <span class="batch-num">CF ${bi + 1}</span>
         <div class="batch-cf-wrap">
           <label>Codice Fiscale Fornitore</label>
-          <input type="text" class="batch-cf"
-            placeholder="11 cifre o 16 alfanum"
+          <input type="text" class="batch-cf" id="cf-input-${b.id}"
+            placeholder="11 cifre (P.IVA) o 16 alfanum (CF)"
             value="${escHtml(b.cf)}"
             maxlength="16"
             oninput="updateCf(${b.id}, this.value)"
           />
+          <div class="cf-hint ${cfHintClass(b.cf)}" id="cf-hint-${b.id}">${cfHintText(b.cf)}</div>
         </div>
         ${batches.length > 1 ? `<button class="batch-del" onclick="removeBatch(${b.id})" title="Rimuovi questo lotto">✕</button>` : ''}
       </div>
@@ -292,8 +300,53 @@ function onFileInput(id, input) {
   input.value = '';
 }
 
+// ── CF validation ────────────────────────────────────────────────────────────
+function isCfValid(cf) {
+  const v = cf.trim().toUpperCase();
+  return /^[0-9]{11}$/.test(v) || /^[A-Z0-9]{16}$/.test(v);
+}
+
+function cfHintClass(cf) {
+  const v = cf.trim().toUpperCase();
+  if (!v) return 'neutral';
+  if (/^[0-9]{11}$/.test(v)) return 'ok';
+  if (/^[A-Z0-9]{16}$/.test(v)) return 'ok';
+  // Partial states
+  if (/^[0-9]+$/.test(v)) return v.length < 11 ? 'neutral' : 'err';
+  if (/^[A-Z0-9]+$/.test(v)) return v.length < 16 ? 'neutral' : 'err';
+  return 'err';
+}
+
+function cfHintText(cf) {
+  const v = cf.trim().toUpperCase();
+  if (!v) return '';
+  if (/^[0-9]{11}$/.test(v)) return '✓ Partita IVA valida (11 cifre)';
+  if (/^[A-Z0-9]{16}$/.test(v)) return '✓ Codice Fiscale valido (16 caratteri)';
+  if (/^[0-9]+$/.test(v)) {
+    const rem = 11 - v.length;
+    if (rem > 0) return `Partita IVA — ancora ${rem} cifr${rem===1?'a':'e'}`;
+    return '✗ Partita IVA: deve essere esattamente 11 cifre';
+  }
+  if (/^[A-Z0-9]+$/.test(v)) {
+    const rem = 16 - v.length;
+    if (rem > 0) return `Codice Fiscale — ancora ${rem} caratteri`;
+    return '✗ Codice Fiscale: deve essere esattamente 16 caratteri';
+  }
+  return '✗ Solo cifre (P.IVA 11) o alfanumerico maiuscolo (CF 16)';
+}
+
+function updateCfHint(id, val) {
+  const inp = document.getElementById('cf-input-' + id);
+  const hint = document.getElementById('cf-hint-' + id);
+  if (!inp || !hint) return;
+  const cls = cfHintClass(val);
+  inp.className = 'batch-cf' + (cls === 'ok' ? ' valid' : cls === 'err' ? ' invalid' : '');
+  hint.className = 'cf-hint ' + cls;
+  hint.textContent = cfHintText(val);
+}
+
 function checkReady() {
-  const ok = batches.some(b => b.files.length > 0 && b.cf.trim().length >= 10);
+  const ok = batches.some(b => b.files.length > 0 && isCfValid(b.cf));
   document.getElementById('btnGo').disabled = !ok;
 }
 
@@ -311,7 +364,7 @@ function resetAll() {
 
 // ── Upload & pipeline ──────────────────────────────────────────────────────
 async function go() {
-  const activeBatches = batches.filter(b => b.files.length > 0 && b.cf.trim().length >= 10);
+  const activeBatches = batches.filter(b => b.files.length > 0 && isCfValid(b.cf));
   if (!activeBatches.length) { alert('Aggiungere almeno un file XML con CF valido.'); return; }
 
   const fd = new FormData();
