@@ -153,7 +153,7 @@
   <div class="card">
     <div class="card-head">
       <div class="card-title">Elabora file GloBE XML</div>
-      <button class="add-batch-btn" onclick="addBatch()">＋ Aggiungi TIN / lotto</button>
+      <button class="add-batch-btn" onclick="addBatch()">＋ Aggiungi TIN</button>
     </div>
     <div class="card-body">
       <div class="batch-list" id="batchList"></div>
@@ -259,7 +259,7 @@ function renderBatches() {
           />
           <div class="cf-hint ${cfHintClass(b.cf)}" id="cf-hint-${b.id}">${cfHintText(b.cf)}</div>
         </div>
-        ${batches.length > 1 ? `<button class="batch-del" onclick="removeBatch(${b.id})" title="Rimuovi questo lotto">✕</button>` : ''}
+        ${batches.length > 1 ? `<button class="batch-del" onclick="removeBatch(${b.id})" title="Rimuovi TIN">✕</button>` : ''}
       </div>
       <div class="batch-body">
         <div class="drop" id="drop-${b.id}"
@@ -347,11 +347,11 @@ function updateCfHint(id, val) {
 
 function checkReady() {
   const withFiles = batches.filter(b => b.files.length > 0);
-  // Must have at least one batch with files AND a valid TIN
-  const hasValidBatch = withFiles.some(b => isCfValid(b.cf));
-  // No batch with files can have an invalid (non-empty, non-valid) TIN
-  const hasInvalidTin = withFiles.some(b => b.cf.trim() !== '' && !isCfValid(b.cf));
-  document.getElementById('btnGo').disabled = !hasValidBatch || hasInvalidTin;
+  // Must have at least one batch with files
+  const hasAnyFiles = withFiles.length > 0;
+  // Every batch with files must have a valid TIN (empty counts as invalid)
+  const allTinsValid = withFiles.every(b => isCfValid(b.cf));
+  document.getElementById('btnGo').disabled = !hasAnyFiles || !allTinsValid;
 }
 
 function resetAll() {
@@ -369,7 +369,7 @@ function resetAll() {
 // ── Upload & pipeline ──────────────────────────────────────────────────────
 async function go() {
   const activeBatches = batches.filter(b => b.files.length > 0 && isCfValid(b.cf));
-  if (!activeBatches.length) { alert('Aggiungere almeno un file XML con TIN valido.'); return; }
+  if (!activeBatches.length) { alert('Aggiungere almeno un file XML per ogni TIN valido.'); return; }
 
   const fd = new FormData();
   activeBatches.forEach(b => {
