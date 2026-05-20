@@ -7,8 +7,11 @@ Summary, JurisdictionSection (ETR, SBIE, QDMTT, LowTaxJurisdiction,
 Election, UTPRAttribution), ExcludedEntity.
 """
 from __future__ import annotations
+import json
 from pathlib import Path
 from lxml import etree
+
+_CODES = json.loads((Path(__file__).parent / "globe_codes.json").read_text(encoding="utf-8"))
 
 NS = {
     "globe": "urn:oecd:ties:globe:v2",
@@ -48,202 +51,35 @@ def _bool(v):
     if v is None: return "—"
     return "✓ Sì" if str(v).lower() == "true" else "✗ No"
 
-# ── Lookup completi da XSD ufficiale ─────────────────────────────────────────
-MSG_TYPE_INDIC = {
-    "GIR101": "GIR101 – New information",
-    "GIR102": "GIR102 – Correction of previously sent information",
-    "GIR103": "GIR103 – Nil report (no data to report)",
-}
-ROLE = {
-    "GIR401": "GIR401 – UPE",
-    "GIR402": "GIR402 – Designated Filing Entity",
-    "GIR403": "GIR403 – Designated Local Entity",
-    "GIR404": "GIR404 – Constituent Entity",
-    "GIR405": "GIR405 – Other",
-}
-CFS = {
-    "GIR501": "GIR501 – Consolidated Financial Statements of UPE",
-    "GIR502": "GIR502 – CFS of a different entity",
-    "GIR503": "GIR503 – CFS not prepared under a qualifying standard",
-    "GIR504": "GIR504 – Other",
-}
-GLOBE_STATUS = {
-    "GIR301": "Constituent Entity",
-    "GIR302": "Flow-Through Entity – Tax Transparent",
-    "GIR303": "Flow-Through Entity – Reverse Hybrid",
-    "GIR304": "Hybrid Entity",
-    "GIR305": "Permanent Establishment",
-    "GIR306": "Main Entity",
-    "GIR307": "Minority-Owned Parent Entity",
-    "GIR308": "Minority-Owned Subsidiary",
-    "GIR309": "Minority-Owned Constituent Entity",
-    "GIR310": "Investment Entity",
-    "GIR311": "Insurance Investment Entity",
-    "GIR312": "Securitisation Entity",
-    "GIR313": "JV",
-    "GIR314": "JV Subsidiary",
-    "GIR315": "Non-Material Constituent Entity",
-    "GIR316": "Excluded Entity",
-    "GIR317": "Parent Entity – QIIR under Art. 10.3.5",
-    "GIR318": "Non-group Member",
-}
-RULES = {
-    "GIR201": "QIIR – Low-Taxed CE in other jurisdictions only",
-    "GIR202": "QIIR – Low-Taxed CE in other jurisdictions AND in Parent jurisdiction",
-    "GIR203": "QUTPR",
-    "GIR204": "QDMTT",
-    "GIR205": "Not applicable",
-}
-OWN_TYPE = {
-    "GIR801": "UPE",
-    "GIR802": "Constituent Entities",
-    "GIR803": "JVs",
-    "GIR804": "JV Subsidiaries",
-    "GIR805": "Excluded Entities (aggregate)",
-    "GIR806": "Non-Group members (aggregate)",
-}
-EXCL_ENTITY = {
-    "GIR1001": "Governmental Entity",
-    "GIR1002": "International Organisation",
-    "GIR1003": "Non-profit Organisation",
-    "GIR1004": "Pension Fund",
-    "GIR1005": "Investment Fund (UPE)",
-    "GIR1006": "Real Estate Investment Vehicle (UPE)",
-    "GIR1007": "Entity owned by Excluded Entities – Art. 1.5.2(a)",
-    "GIR1008": "Entity owned by Excluded Entities – Art. 1.5.2(b)",
-}
-SAFE_HARBOUR = {
-    "GIR1201": "De minimis Exclusion",
-    "GIR1202": "QDMTT safe harbour",
-    "GIR1203": "Transitional CbCR Safe Harbour – De minimis test",
-    "GIR1204": "Transitional CbCR Safe Harbour – ETR test",
-    "GIR1205": "Transitional CbCR Safe Harbour – Routine profit test",
-    "GIR1206": "Transitional UTPR Safe Harbour",
-    "GIR1207": "Permanent Safe Harbour – De minimis test",
-    "GIR1208": "Permanent Safe Harbour – ETR test",
-    "GIR1209": "Permanent Safe Harbour – Routine profit test",
-}
-ETR_RANGE = {
-    "GIR1301": "below 2.5%",
-    "GIR1302": "2.5% or above, below 5%",
-    "GIR1303": "5% or above, below 7.5%",
-    "GIR1304": "7.5% or above, below 10%",
-    "GIR1305": "10% or above, below 12.5%",
-    "GIR1306": "12.5% or above, below 15%",
-    "GIR1307": "15% or above, below 17.5%",
-    "GIR1308": "17.5% or above, below 20%",
-    "GIR1309": "20% or above, below 22.5%",
-    "GIR1310": "22.5% or above, below 25%",
-    "GIR1311": "25% or above, below 27.5%",
-    "GIR1312": "27.5% or above, below 30%",
-    "GIR1313": "30% or above",
-    "GIR1314": "Section 3.2 not completed",
-}
-QDMTT_UT = {
-    "GIR1401": "No Top-up Tax payable",
-    "GIR1402": "below EUR 1 million",
-    "GIR1403": "EUR 1M – EUR 5M",
-    "GIR1404": "EUR 5M – EUR 25M",
-    "GIR1405": "EUR 25M – EUR 50M",
-    "GIR1406": "EUR 50M – EUR 75M",
-    "GIR1407": "EUR 75M – EUR 100M",
-    "GIR1408": "EUR 100M – EUR 250M",
-    "GIR1409": "EUR 250M or above",
-}
-GLOBE_UT = {
-    "GIR1501": "No Top-up Tax payable",
-    "GIR1502": "below EUR 1 million",
-    "GIR1503": "EUR 1M – EUR 5M",
-    "GIR1504": "EUR 5M – EUR 25M",
-    "GIR1505": "EUR 25M – EUR 50M",
-    "GIR1506": "EUR 50M – EUR 75M",
-    "GIR1507": "EUR 75M – EUR 100M",
-    "GIR1508": "EUR 100M – EUR 250M",
-    "GIR1509": "EUR 250M or above",
-}
-ADJ_ITEM = {
-    "GIR2001": "Net Taxes Expense – Art. 3.2.1(a)",
-    "GIR2002": "Excluded Dividends – Art. 3.2.1(b)",
-    "GIR2003": "Excluded Equity Gain/Loss – Art. 3.2.1(c)",
-    "GIR2004": "Included Revaluation Method Gain/Loss – Art. 3.2.1(d)",
-    "GIR2005": "Gain/loss from disposition excluded under Art. 6.3 – Art. 3.2.1(e)",
-    "GIR2006": "Asymmetric FX Gains/Losses – Art. 3.2.1(f)",
-    "GIR2007": "Policy Disallowed Expenses – Art. 3.2.1(g)",
-    "GIR2008": "Prior Period Errors – Art. 3.2.1(h)",
-    "GIR2009": "Changes in Accounting Principles – Art. 3.2.1(h)",
-    "GIR2010": "Accrued Pension Expense – Art. 3.2.1(i)",
-    "GIR2011": "Debt releases – Art. 3.2.1",
-    "GIR2012": "Stock-based compensation – Art. 3.2.2",
-    "GIR2013": "Arm's length adjustments – Art. 3.2.3",
-    "GIR2014": "Qualified Refundable Tax Credit – Art. 3.2.4",
-    "GIR2015": "Realisation principle election – Art. 3.2.5",
-    "GIR2016": "Adjusted Asset Gain election – Art. 3.2.6",
-    "GIR2017": "Intragroup Financing Arrangement – Art. 3.2.7",
-    "GIR2018": "Intragroup transactions same jurisdiction – Art. 3.2.8",
-    "GIR2019": "Insurance company taxes to policyholders – Art. 3.2.9",
-    "GIR2020": "AT1/RT1 Capital distributions – Art. 3.2.10",
-    "GIR2021": "CE joining/leaving MNE Group – Art. 3.2.11 / 6.2",
-    "GIR2022": "Reduction GloBE Income UPE Flow-Through – Art. 7.1",
-    "GIR2023": "Reduction GloBE Income UPE Deductible Dividend – Art. 7.2",
-    "GIR2024": "Taxable Distribution Method election – Art. 7.6",
-    "GIR2025": "International Shipping Income – Art. 3.3",
-    "GIR2026": "Transactions between CE – Art. 9.1.3",
-}
-CURR_ADJ = {
-    "GIR2401": "Covered Tax accrued – Art. 4.1.2(a)",
-    "GIR2402": "Covered Taxes uncertain tax position – Art. 4.1.2(c)",
-    "GIR2403": "QRTC/MTTC reduction – Art. 4.1.2(d)",
-    "GIR2404": "Flow-through Tax Benefits – Art. 3.2.1(c)",
-    "GIR2405": "Current tax on excluded income – Art. 4.1.3(a)",
-    "GIR2406": "Non-QRTC/non-MTTC credits – Art. 4.1.3(b)",
-    "GIR2407": "Covered Taxes refunded/credited – Art. 4.1.3(c)",
-    "GIR2408": "Current tax – uncertain tax position – Art. 4.1.3(d)",
-    "GIR2409": "Current tax not paid within 3 years – Art. 4.1.3(e)",
-    "GIR2410": "Post-filing adjustments – Art. 4.6.1",
-    "GIR2411": "Covered Taxes Net Asset Gain/Loss – Art. 3.2.6",
-    "GIR2412": "Reduction UPE Flow-Through – Art. 7.1",
-    "GIR2413": "Covered Taxes Deductible Dividend – Art. 7.2.2",
-    "GIR2414": "Deemed Distribution Tax – Art. 7.3",
-    "GIR2415": "Taxable Distribution Method – Art. 7.6(b)",
-    "GIR2416": "Total Deferred Tax Adjustment – Art. 4.4.1(b)",
-    "GIR2417": "Covered Taxes in equity/OCI – Art. 4.1.1(c)",
-}
-FINAL_ADJ = {**CURR_ADJ,
-    "GIR2706": "Current tax on excluded income – Art. 4.1.3(a)",
-    "GIR2707": "Non-QRTC credits – Art. 4.1.3(b)",
-    "GIR2719": "Excess Neg Tax Expense generated – Art. 4.1.5 / 5.2.1",
-    "GIR2720": "Decrease by Excess Neg Tax Carry-forward – Art. 4.1.5 / 5.2.1",
-}
-TYPE_INDIC = {
-    "OECD0":  "New data",
-    "OECD1":  "Resent data",
-    "OECD10": "Correction",
-    "OECD11": "Deletion",
-    "OECD13": "Corrected Correction",
-}
+# ── Lookup da globe_codes.json ───────────────────────────────────────────────
+MSG_TYPE_INDIC = _CODES["MSG_TYPE_INDIC"]
+ROLE           = _CODES["ROLE"]
+CFS            = _CODES["CFS"]
+GLOBE_STATUS   = _CODES["GLOBE_STATUS"]
+RULES          = _CODES["RULES"]
+OWN_TYPE       = _CODES["OWN_TYPE"]
+EXCL_ENTITY    = _CODES["EXCL_ENTITY"]
+SAFE_HARBOUR   = _CODES["SAFE_HARBOUR"]
+ETR_RANGE      = _CODES["ETR_RANGE"]
+QDMTT_UT       = _CODES["QDMTT_UT"]
+GLOBE_UT       = _CODES["GLOBE_UT"]
+ADJ_ITEM       = _CODES["ADJ_ITEM"]
+CURR_ADJ       = _CODES["CURR_ADJ"]
+FINAL_ADJ      = _CODES["FINAL_ADJ"]
+TYPE_INDIC     = _CODES["TYPE_INDIC"]
+SUBGROUP_TYPE  = _CODES["SUBGROUP_TYPE"]
+ETR_BADGE      = _CODES["ETR_BADGE"]
+
 def lk(d, k): return d.get(k, k) if k else "—"
 
 # ── ETR badge colore ──────────────────────────────────────────────────────────
-SUBGROUP_TYPE = {
-    "GIR1101": "Constituent Entities",
-    "GIR1102": "Minority-Owned Subgroup",
-    "GIR1103": "Standalone MOCEs",
-    "GIR1104": "Investment Entities",
-    "GIR1105": "JV Group",
-    "GIR1106": "Stateless CE",
-    "GIR1607": "Transitional CbCR SH – CE",
-    "GIR1608": "Transitional CbCR SH – JV Group",
-    "GIR1609": "Transitional UTPR SH",
-}
 
 def _etr_badge(etr_code):
-    danger = {"GIR1301","GIR1302","GIR1303","GIR1304","GIR1305"}
-    warning = {"GIR1306"}
-    ok = {"GIR1307","GIR1308","GIR1309","GIR1310","GIR1311","GIR1312","GIR1313"}
+    badge = ETR_BADGE 
     label = lk(ETR_RANGE, etr_code)
-    if etr_code in danger:  return f'<span class="badge-red">{label}</span>'
-    if etr_code in warning: return f'<span class="badge-yellow">{label}</span>'
-    if etr_code in ok:      return f'<span class="badge-green">{label}</span>'
+    if etr_code in badge["danger"]:  return f'<span class="badge-red">{label}</span>'
+    if etr_code in badge["warning"]: return f'<span class="badge-yellow">{label}</span>'
+    if etr_code in badge["ok"]:      return f'<span class="badge-green">{label}</span>'
     return f'<span class="badge-gray">{label}</span>'
 
 # ── Parser ────────────────────────────────────────────────────────────────────
@@ -627,11 +463,7 @@ def _html(data, xml_name):
         # ETRException (Safe Harbour / No ETRComputation)
         exc_h = ""
         if j.get("etr_exception"):
-            EXC_LABELS = {
-                "TransitionalCbCRSafeHarbour": "Transitional CbCR Safe Harbour",
-                "Deminimis-SimplifiedNMCECalc": "De minimis / Simplified NMCE Calculation",
-                "UTPRSafeHarbour": "UTPR Safe Harbour",
-            }
+            EXC_LABELS = _CODES["EXC_LABELS"]
             exc_rows = ""
             for ex in j["etr_exception"]:
                 ex_label = EXC_LABELS.get(ex["type"], ex["type"])
