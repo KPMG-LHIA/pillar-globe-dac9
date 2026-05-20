@@ -153,7 +153,7 @@
   <div class="card">
     <div class="card-head">
       <div class="card-title">Elabora file GloBE XML</div>
-      <button class="add-batch-btn" onclick="addBatch()">＋ Aggiungi CF / lotto</button>
+      <button class="add-batch-btn" onclick="addBatch()">＋ Aggiungi TIN</button>
     </div>
     <div class="card-body">
       <div class="batch-list" id="batchList"></div>
@@ -248,11 +248,11 @@ function renderBatches() {
   container.innerHTML = batches.map((b, bi) => `
     <div class="batch-row" id="batch-${b.id}">
       <div class="batch-header">
-        <span class="batch-num">CF ${bi + 1}</span>
+        <span class="batch-num">TIN ${bi + 1}</span>
         <div class="batch-cf-wrap">
-          <label>Codice Fiscale Fornitore</label>
+          <label>TIN Fornitore</label>
           <input type="text" class="batch-cf" id="cf-input-${b.id}"
-            placeholder="11 cifre (P.IVA) o 16 alfanum (CF)"
+            placeholder="11 cifre (P.IVA) o 16 alfanum (CF pers.)"
             value="${escHtml(b.cf)}"
             maxlength="16"
             oninput="updateCf(${b.id}, this.value)"
@@ -320,19 +320,19 @@ function cfHintClass(cf) {
 function cfHintText(cf) {
   const v = cf.trim().toUpperCase();
   if (!v) return '';
-  if (/^[0-9]{11}$/.test(v)) return '✓ Partita IVA valida (11 cifre)';
-  if (/^[A-Z0-9]{16}$/.test(v)) return '✓ Codice Fiscale valido (16 caratteri)';
+  if (/^[0-9]{11}$/.test(v)) return '✓ TIN valido — P.IVA (11 cifre)';
+  if (/^[A-Z0-9]{16}$/.test(v)) return '✓ TIN valido — CF persona fisica (16 car.)';
   if (/^[0-9]+$/.test(v)) {
     const rem = 11 - v.length;
-    if (rem > 0) return `Partita IVA — ancora ${rem} cifr${rem===1?'a':'e'}`;
-    return '✗ Partita IVA: deve essere esattamente 11 cifre';
+    if (rem > 0) return `TIN (P.IVA) — ancora ${rem} cifr${rem===1?'a':'e'}`;
+    return '✗ P.IVA: esattamente 11 cifre numeriche';
   }
   if (/^[A-Z0-9]+$/.test(v)) {
     const rem = 16 - v.length;
-    if (rem > 0) return `Codice Fiscale — ancora ${rem} caratteri`;
-    return '✗ Codice Fiscale: deve essere esattamente 16 caratteri';
+    if (rem > 0) return `TIN (CF) — ancora ${rem} caratteri`;
+    return '✗ CF: esattamente 16 caratteri alfanumerici';
   }
-  return '✗ Solo cifre (P.IVA 11) o alfanumerico maiuscolo (CF 16)';
+  return '✗ TIN non valido — solo cifre (11) o alfanum. maiusc. (16)';
 }
 
 function updateCfHint(id, val) {
@@ -346,8 +346,12 @@ function updateCfHint(id, val) {
 }
 
 function checkReady() {
-  const ok = batches.some(b => b.files.length > 0 && isCfValid(b.cf));
-  document.getElementById('btnGo').disabled = !ok;
+  const withFiles = batches.filter(b => b.files.length > 0);
+  // Must have at least one batch with files AND a valid TIN
+  const hasValidBatch = withFiles.some(b => isCfValid(b.cf));
+  // No batch with files can have an invalid (non-empty, non-valid) TIN
+  const hasInvalidTin = withFiles.some(b => b.cf.trim() !== '' && !isCfValid(b.cf));
+  document.getElementById('btnGo').disabled = !hasValidBatch || hasInvalidTin;
 }
 
 function resetAll() {
@@ -365,7 +369,7 @@ function resetAll() {
 // ── Upload & pipeline ──────────────────────────────────────────────────────
 async function go() {
   const activeBatches = batches.filter(b => b.files.length > 0 && isCfValid(b.cf));
-  if (!activeBatches.length) { alert('Aggiungere almeno un file XML con CF valido.'); return; }
+  if (!activeBatches.length) { alert('Aggiungere almeno un file XML con TIN valido.'); return; }
 
   const fd = new FormData();
   activeBatches.forEach(b => {
@@ -395,7 +399,7 @@ async function go() {
     if (!r.ok) { alert(d.error || 'Errore upload'); document.getElementById('btnGo').disabled = false; return; }
     jid = d.job_id;
     window._batchMeta = batchMeta; // keep for output grouping
-    addLog('Job avviato · ' + d.files.length + ' file · ' + activeBatches.length + ' CF');
+    addLog('Job avviato · ' + d.files.length + ' file · ' + activeBatches.length + ' TIN');
     llen = 1;
     if (poll) clearInterval(poll);
     poll = setInterval(tick, 2000);
@@ -466,7 +470,7 @@ function showResults(jid, outputs) {
       <div class="result-group-head">
         <span class="result-group-icon">📄</span>
         <span class="result-group-name">${escHtml(g.stem)}.xml</span>
-        ${g.cf ? `<span class="result-group-cf">CF: ${escHtml(g.cf)}</span>` : ''}
+        ${g.cf ? `<span class="result-group-cf">TIN: ${escHtml(g.cf)}</span>` : ''}
       </div>
       <div class="result-group-body">
         ${g.outputs.map(o => {
