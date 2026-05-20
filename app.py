@@ -86,17 +86,6 @@ def auth_callback():
 
     email = claims.get("preferred_username", "").lower()
 
-    # Verifica dominio: accetta solo account @kpmg.* (es. @kpmg.it, @kpmg.com, @kpmg.de)
-    # Il dominio deve iniziare con "kpmg." per evitare falsi positivi (es. notkpmg.com)
-    domain = email.split("@")[-1] if "@" in email else ""
-    if not (domain == "kpmg" or domain.startswith("kpmg.")):
-        return (
-            f"<h2 style='font-family:sans-serif;margin:40px'>Accesso negato</h2>"
-            f"<p style='font-family:sans-serif;margin:40px'>L'account <strong>{email}</strong> "
-            f"non appartiene al dominio KPMG. Solo account @kpmg.* sono autorizzati.</p>"
-            f"<p style='font-family:sans-serif;margin:40px'><a href='/auth/logout'>Torna al login</a></p>"
-        ), 403
-
     session["user"] = {
         "name":  claims.get("name", claims.get("preferred_username", "Utente")),
         "email": email,
