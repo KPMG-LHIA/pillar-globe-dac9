@@ -30,7 +30,6 @@ Changelog rispetto alla versione precedente:
 from __future__ import annotations
 
 import re
-import uuid
 import shutil
 from datetime import datetime
 from pathlib import Path
@@ -74,41 +73,6 @@ _CF_RE = re.compile(r"^([0-9]{10,11}|[A-Z0-9]{16})$")
 # ---------------------------------------------------------------------------
 # Funzione principale
 # ---------------------------------------------------------------------------
-
-# ---------------------------------------------------------------------------
-# Risoluzione placeholder {Guid:D}
-# ---------------------------------------------------------------------------
-
-NS_GLOBE_TAG = f"{{{NS_GLOBE}}}"
-NS_STF_TAG   = f"{{{NS_STF}}}"
-
-def _new_guid() -> str:
-    """Genera un UUID4 nel formato xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx."""
-    return str(uuid.uuid4())
-
-def _resolve_guid_placeholders(globe_root) -> None:
-    """
-    Sostituisce tutti i valori che contengono il placeholder {Guid:D}
-    (o varianti come {Guid}) in MessageRefId e DocRefId con UUID4 reali.
-
-    Questo garantisce che la shell MSG generata passi i check AdE 60001 e 60011,
-    i quali rifiutano qualsiasi riferimento con placeholder non risolti.
-    """
-    _GUID_RE = re.compile(r"\{Guid(?::[A-Za-z])?\}")
-
-    # MessageRefId (in MessageSpec, namespace globe:)
-    for tag in (f"{NS_GLOBE_TAG}MessageRefId",):
-        for el in globe_root.iter(tag):
-            if el.text and _GUID_RE.search(el.text):
-                el.text = _GUID_RE.sub(_new_guid(), el.text)
-
-    # DocRefId e CorrDocRefId (in DocSpec, namespace stf:)
-    for tag in (f"{NS_STF_TAG}DocRefId", f"{NS_STF_TAG}CorrDocRefId"):
-        for el in globe_root.iter(tag):
-            if el.text and _GUID_RE.search(el.text):
-                el.text = _GUID_RE.sub(_new_guid(), el.text)
-
-
 
 def encapsulate(
     xml_path: str | Path,
@@ -158,9 +122,6 @@ def encapsulate(
     parser = etree.XMLParser(remove_blank_text=False)
     globe_tree = etree.parse(str(xml_path), parser)
     globe_root = globe_tree.getroot()  # <globe:GLOBE_OECD>
-
-    # --- Risolve placeholder {Guid:D} in MessageRefId e DocRefId ---
-    _resolve_guid_placeholders(globe_root)
 
     # --- Costruisci struttura shell ---
     root = etree.Element(f"{{{NS_TM}}}Messaggio", nsmap=NSMAP_ROOT)
