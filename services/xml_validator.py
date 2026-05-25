@@ -1,14 +1,14 @@
 """
 xml_validator.py  –  PILLAR GloBE/DAC9
-Implementa tutti i check AdE dall'Allegato Tecnico (13 marzo 2026):
-  • Sezione 8.2  – Record Errors SEVERE  (60001-60028, escluso 60018 assente nel doc)
+Implementa tutti i check AdE verificabili offline dall'Allegato Tecnico (13 marzo 2026):
+  • Sezione 8.2  – Record Errors SEVERE  (60001-60028, esclusi 60002/60008/60009/60014)
   • Sezione 8.3  – Record Errors OTHER   (70001-70124)
 
-Check in SKIP (non verificabili offline, richiedono storico AdE):
-  60002 – MessageRefId duplicato rispetto a file già ricevuto
-  60008 – CorrDocRefId riferito a record sconosciuto
-  60009 – CorrDocRefId deve riferirsi all'ultima istanza valida
-  60014 – FilingInfo OECD0: DocRefId deve coincidere con ultima versione
+I check 60002, 60008, 60009, 60014 richiedono storico trasmissioni AdE e non sono inclusi.
+
+Se il file contiene placeholder {Guid:D} non risolti, il validatore genera UUID4 casuali
+in-memory per poter eseguire i check (il file sorgente non viene modificato).
+La presenza di placeholder viene segnalata nel Sommario del report XLSX.
 
 Utilizzo:
     from services.xml_validator import validate
@@ -17,7 +17,9 @@ Utilizzo:
 
 from __future__ import annotations
 
+import copy
 import re
+import uuid
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -41,6 +43,7 @@ def _ns(tag: str) -> str:
     return f"{{{NS[prefix]}}}{local}"
 
 # ── Costanti ──────────────────────────────────────────────────────────────────
+PLACEHOLDER_RE = re.compile(r"\{Guid:D\}", re.IGNORECASE)
 
 # DocRefId: [IT][2024][<UUID>]  (SendingCountry=2, ReportingYear=4, UniqueID=UUID-ish)
 DOCREFID_RE = re.compile(
@@ -133,6 +136,37 @@ def _date(s: str) -> date | None:
             continue
     return None
 
+# ── Risoluzione placeholder {Guid:D} ─────────────────────────────────────────
+
+def _has_guid_placeholders(root: etree._Element) -> bool:
+    """Restituisce True se il file contiene almeno un placeholder {Guid:D}."""
+    for el in root.iter():
+        if el.text and PLACEHOLDER_RE.search(el.text):
+            return True
+        for val in el.attrib.values():
+            if PLACEHOLDER_RE.search(val):
+                return True
+    return False
+
+def _resolve_guid_placeholders(root: etree._Element) -> etree._Element:
+    """
+    Restituisce un deepcopy dell'albero XML con tutti i placeholder
+    {Guid:D} sostituiti con UUID4 casuali, senza modificare il sorgente.
+    """
+    root = copy.deepcopy(root)
+    for el in root.iter():
+        if el.text and PLACEHOLDER_RE.search(el.text):
+            el.text = PLACEHOLDER_RE.sub(lambda _: str(uuid.uuid4()), el.text)
+        if el.tail and PLACEHOLDER_RE.search(el.tail):
+            el.tail = PLACEHOLDER_RE.sub(lambda _: str(uuid.uuid4()), el.tail)
+        for attr_name in list(el.attrib):
+            val = el.attrib[attr_name]
+            if PLACEHOLDER_RE.search(val):
+                el.attrib[attr_name] = PLACEHOLDER_RE.sub(
+                    lambda _: str(uuid.uuid4()), val
+                )
+    return root
+
 # ── Funzione principale ───────────────────────────────────────────────────────
 
 def validate(xml_path: Path, output_dir: Path | None = None) -> Path:
@@ -157,12 +191,17 @@ def validate(xml_path: Path, output_dir: Path | None = None) -> Path:
         ]
         return _write_xlsx(results, xml_path, output_dir)
 
+    # Rileva e risolve placeholder {Guid:D} in-memory
+    guid_resolved = _has_guid_placeholders(root)
+    if guid_resolved:
+        root = _resolve_guid_placeholders(root)
+
     results: list[CheckResult] = []
     results += _check_file_errors(root, xml_path)
     results += _check_severe(root)
     results += _check_other(root)
 
-    return _write_xlsx(results, xml_path, output_dir)
+    return _write_xlsx(results, xml_path, output_dir, guid_resolved=guid_resolved)
 
 # ── 8.1 FILE ERRORS (50001-50004) ────────────────────────────────────────────
 
@@ -239,12 +278,6 @@ def _check_severe(root) -> list[CheckResult]:
         r.warn(f"Formato inatteso: {msg_ref!r}")
     out.append(r)
 
-    # --- 60002 SKIP (richiede storico AdE) ---
-    out.append(CheckResult("60002",
-        "MessageRefId duplicato rispetto a file già ricevuto.",
-        "/GLOBE_OECD/MessageSpec/MessageRefId"
-    ).skip("Verifica possibile solo con storico AdE."))
-
     # --- 60003 Anno ReportingPeriod non futuro ---
     r = CheckResult("60003",
         "L'anno di ReportingPeriod non può essere maggiore dell'anno corrente.",
@@ -310,18 +343,6 @@ def _check_severe(root) -> list[CheckResult]:
             r.ko(f"DocRefId duplicati: {', '.join(sorted(dups)[:3])}")
     out.append(r)
 
-    # --- 60008 SKIP ---
-    out.append(CheckResult("60008",
-        "CorrDocRefId riferito a record sconosciuto.",
-        "/GLOBE_OECD/GLOBEBody/*/DocSpec/CorrDocRefId"
-    ).skip("Verifica possibile solo con storico AdE."))
-
-    # --- 60009 SKIP ---
-    out.append(CheckResult("60009",
-        "CorrDocRefId deve riferirsi all'ultima istanza valida del record.",
-        "/GLOBE_OECD/GLOBEBody/*/DocSpec/CorrDocRefId"
-    ).skip("Verifica possibile solo con storico AdE."))
-
     # --- 60010 FilingInfo OECD3 implica cancellazione di tutti i blocchi correlati ---
     r = CheckResult("60010",
         "FilingInfo non può essere cancellato (OECD3) senza cancellare anche GeneralSection, Summary, JurisdictionSection, UTPRAttribution.",
@@ -385,12 +406,6 @@ def _check_severe(root) -> list[CheckResult]:
     if bad_blocks:
         r.ko(f"OECD0 trovato in: {', '.join(bad_blocks[:3])}")
     out.append(r)
-
-    # --- 60014 SKIP ---
-    out.append(CheckResult("60014",
-        "Se FilingInfo/DocTypeIndic = OECD0, DocRefId deve coincidere con ultima versione.",
-        "/GLOBE_OECD/GLOBEBody/FilingInfo/DocSpec/DocRefId"
-    ).skip("Verifica possibile solo con storico AdE."))
 
     # --- 60015 OECD2/OECD3: CorrDocRefId obbligatorio ---
     r = CheckResult("60015",
@@ -3273,7 +3288,8 @@ def _fill_for(status: str):
     }.get(status, None)
 
 
-def _write_xlsx(results: list[CheckResult], xml_path: Path, output_dir: Path) -> Path:
+def _write_xlsx(results: list[CheckResult], xml_path: Path, output_dir: Path,
+                guid_resolved: bool = False) -> Path:
     stem    = xml_path.stem
     out_path = output_dir / f"{stem}_validation_report.xlsx"
     wb = Workbook()
@@ -3306,6 +3322,12 @@ def _write_xlsx(results: list[CheckResult], xml_path: Path, output_dir: Path) ->
         ("⚠ WARN",      counts["WARN"]),
         ("Esito",       esito),
     ]
+    if guid_resolved:
+        info.insert(2, ("⚠ Placeholder GUID",
+                        "Il file conteneva {Guid:D} non risolti. "
+                        "I check sono stati eseguiti su UUID4 generati casualmente. "
+                        "Il file sorgente NON è stato modificato."))
+
     for i, (k, v) in enumerate(info, start=2):
         ws1.cell(row=i, column=1, value=k).font = Font(bold=True)
         ws1.cell(row=i, column=1).border = _THIN
@@ -3314,9 +3336,12 @@ def _write_xlsx(results: list[CheckResult], xml_path: Path, output_dir: Path) ->
         if k == "Esito":
             c.fill = _FILL_OK if "VALIDO" in str(v) else _FILL_KO
             c.font = Font(bold=True)
+        elif k.startswith("⚠ Placeholder"):
+            c.fill = _FILL_SKIP
+            ws1.cell(row=i, column=1).fill = _FILL_SKIP
 
-    ws1.column_dimensions["A"].width = 18
-    ws1.column_dimensions["B"].width = 50
+    ws1.column_dimensions["A"].width = 22
+    ws1.column_dimensions["B"].width = 70
 
     # ── Foglio 2: Dettaglio ───────────────────────────────────────────────────
     ws2 = wb.create_sheet("Dettaglio")

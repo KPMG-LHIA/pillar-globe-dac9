@@ -252,7 +252,7 @@ function renderBatches() {
         <div class="batch-cf-wrap">
           <label>TIN Fornitore</label>
           <input type="text" class="batch-cf" id="cf-input-${b.id}"
-            placeholder="11 cifre (P.IVA) o 16 alfanum (CF pers.)"
+            placeholder=""
             value="${escHtml(b.cf)}"
             maxlength="16"
             oninput="updateCf(${b.id}, this.value)"
