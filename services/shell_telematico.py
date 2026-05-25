@@ -29,8 +29,10 @@ Changelog rispetto alla versione precedente:
 
 from __future__ import annotations
 
+import copy
 import re
 import shutil
+import uuid
 from datetime import datetime
 from pathlib import Path
 
@@ -65,9 +67,30 @@ SCHEMA_LOCATION = (
 CODICE_FORNITURA = "GIR26"
 
 # Regex di validazione CodiceFiscaleFornitore (da telematico_v1.xsd: [0-9]{11}|[A-Z0-9]{16})
-# Esteso a [0-9]{10,11} per PIVA italiane che possono avere 10 cifre significative
-# (Intercos: 5813780961 = 10 cifre; sample TDAC9: 01212121212 = 11 cifre con leading 0)
-_CF_RE = re.compile(r"^([0-9]{10,11}|[A-Z0-9]{16})$")
+_CF_RE = re.compile(r"^([0-9]{11}|[A-Z0-9]{16})$")
+
+# Regex placeholder GUID
+_PLACEHOLDER_RE = re.compile(r"\{Guid:D\}", re.IGNORECASE)
+
+
+def _resolve_guid_placeholders(root: etree._Element) -> etree._Element:
+    """
+    Restituisce un deepcopy dell'albero XML con tutti i placeholder {Guid:D}
+    sostituiti con UUID4 reali. Il file sorgente non viene modificato.
+    """
+    root = copy.deepcopy(root)
+    for el in root.iter():
+        if el.text and _PLACEHOLDER_RE.search(el.text):
+            el.text = _PLACEHOLDER_RE.sub(lambda _: str(uuid.uuid4()), el.text)
+        if el.tail and _PLACEHOLDER_RE.search(el.tail):
+            el.tail = _PLACEHOLDER_RE.sub(lambda _: str(uuid.uuid4()), el.tail)
+        for attr_name in list(el.attrib):
+            val = el.attrib[attr_name]
+            if _PLACEHOLDER_RE.search(val):
+                el.attrib[attr_name] = _PLACEHOLDER_RE.sub(
+                    lambda _: str(uuid.uuid4()), val
+                )
+    return root
 
 
 # ---------------------------------------------------------------------------
@@ -122,6 +145,9 @@ def encapsulate(
     parser = etree.XMLParser(remove_blank_text=False)
     globe_tree = etree.parse(str(xml_path), parser)
     globe_root = globe_tree.getroot()  # <globe:GLOBE_OECD>
+
+    # --- Risolvi placeholder {Guid:D} in-memory (il sorgente non viene modificato) ---
+    globe_root = _resolve_guid_placeholders(globe_root)
 
     # --- Costruisci struttura shell ---
     root = etree.Element(f"{{{NS_TM}}}Messaggio", nsmap=NSMAP_ROOT)

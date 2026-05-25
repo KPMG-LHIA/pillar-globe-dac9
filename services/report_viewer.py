@@ -7,11 +7,36 @@ Summary, JurisdictionSection (ETR, SBIE, QDMTT, LowTaxJurisdiction,
 Election, UTPRAttribution), ExcludedEntity.
 """
 from __future__ import annotations
+import copy
 import json
+import re
+import uuid
 from pathlib import Path
 from lxml import etree
 
 _CODES = json.loads((Path(__file__).parent / "globe_codes.json").read_text(encoding="utf-8"))
+
+# Regex placeholder GUID
+_PLACEHOLDER_RE = re.compile(r"\{Guid:D\}", re.IGNORECASE)
+
+def _resolve_guid_placeholders(root: etree._Element) -> etree._Element:
+    """
+    Restituisce un deepcopy dell'albero XML con tutti i placeholder {Guid:D}
+    sostituiti con UUID4 reali. Il file sorgente non viene modificato.
+    """
+    root = copy.deepcopy(root)
+    for el in root.iter():
+        if el.text and _PLACEHOLDER_RE.search(el.text):
+            el.text = _PLACEHOLDER_RE.sub(lambda _: str(uuid.uuid4()), el.text)
+        if el.tail and _PLACEHOLDER_RE.search(el.tail):
+            el.tail = _PLACEHOLDER_RE.sub(lambda _: str(uuid.uuid4()), el.tail)
+        for attr_name in list(el.attrib):
+            val = el.attrib[attr_name]
+            if _PLACEHOLDER_RE.search(val):
+                el.attrib[attr_name] = _PLACEHOLDER_RE.sub(
+                    lambda _: str(uuid.uuid4()), val
+                )
+    return root
 
 NS = {
     "globe": "urn:oecd:ties:globe:v2",
@@ -86,6 +111,10 @@ def _etr_badge(etr_code):
 def parse_globe(xml_path):
     tree = etree.parse(str(xml_path))
     root = tree.getroot()
+
+    # Risolvi placeholder {Guid:D} in-memory prima di estrarre i dati
+    root = _resolve_guid_placeholders(root)
+
     globe = root if "GLOBE_OECD" in root.tag else root.find(".//globe:GLOBE_OECD", NS)
     if globe is None: raise ValueError("globe:GLOBE_OECD non trovato")
 
@@ -101,7 +130,6 @@ def parse_globe(xml_path):
     # MessageSpec
     msg_spec = {
         "ref_id":      _g(ms, "globe:MessageRefId"),
-        "ref_id_warn":  "{Guid" in (_g(ms, "globe:MessageRefId") or ""),
         "type_indic":  lk(MSG_TYPE_INDIC, _g(ms, "globe:MessageTypeIndic")),
         "period":      _g(ms, "globe:ReportingPeriod"),
         "timestamp":   _g(ms, "globe:Timestamp"),
@@ -126,7 +154,6 @@ def parse_globe(xml_path):
         "add_info": _g(fi, "globe:AdditionalInfo"),
         "doc_type": lk(TYPE_INDIC, _g(ds, "stf:DocTypeIndic")),
         "doc_ref":  _g(ds, "stf:DocRefId"),
-        "doc_ref_warn": "{Guid" in (_g(ds, "stf:DocRefId") or ""),
     }
 
     # CorporateStructure
@@ -412,13 +439,13 @@ def _html(data, xml_name):
           row("CFSofUPE", fi["cfs"]) +
           (row("Informazioni aggiuntive", fi["add_info"]) if fi.get("add_info") else ""))
     mr = (row("MessageTypeIndic", f'<span class="{msg_type_class}">{ms["type_indic"]}</span>') +
-          row("MessageRefId", ('⚠ <span class="badge-yellow">Placeholder non risolto: ' + ms["ref_id"] + '</span>' if ms.get("ref_id_warn") else ms["ref_id"])) +
+          row("MessageRefId", ms["ref_id"]) +
           row("Timestamp", ms["timestamp"]) +
           row("Paese trasmittente", ms["transmitting"]) +
           row("Paese ricevente", ms["receiving"]) +
           (row("Contatto", ms["contact"]) if ms.get("contact") and ms["contact"].replace(",","").replace("Email:","").replace("email:","").strip() else "") +
           row("DocTypeIndic", fi["doc_type"]) +
-          row("DocRefId", ('⚠ <span class="badge-yellow">Placeholder non risolto: ' + fi["doc_ref"] + '</span>' if fi.get("doc_ref_warn") else fi["doc_ref"])) +
+          row("DocRefId", fi["doc_ref"]) +
           (row("⚠ Warning", f'<span class="badge-yellow">{ms["warning"]}</span>') if ms.get("warning") else ""))
     html_som = f'<div class="g2"><div>{card("Gruppo e Periodo", tbl(sr))}</div><div>{card("Messaggio", tbl(mr))}</div></div>'
 
