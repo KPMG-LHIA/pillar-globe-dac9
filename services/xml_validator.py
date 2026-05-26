@@ -748,6 +748,10 @@ def _check_other(root) -> list[CheckResult]:
                 tin_errors["70003"].append(
                     f"@unknown=TRUE ma val={val!r} TypeOfTIN={tot!r} issuedBy={issued!r}"
                 )
+        # 70004 – verifica formato TIN per giurisdizione IT (semplificata)
+        if issued == "IT" and val not in ("NOTIN","") and tot not in ("GIR3003","GIR3004"):
+            if not (re.match(r"^\d{11}$", val) or re.match(r"^[A-Z0-9]{16}$", val)):
+                tin_errors["70004"].append(f"TIN IT non valido: {val!r}")
         # 70005
         if not tot:
             tin_errors["70005"].append(f"@TypeOfTIN assente (val={val!r})")
@@ -775,45 +779,11 @@ def _check_other(root) -> list[CheckResult]:
                     f"TIN strutturale con GIR3004/unknown: val={_t(t_el)!r}"
                 )
 
-    # 70004 – verifica formato TIN per giurisdizione locale
-    # Per ogni entità nella CorporateStructure, se issuedBy == ResCountryCode dell'entità
-    # il formato TIN deve essere valido per quel paese.
-    # IT: 11 cifre numeriche (P.IVA) o 16 alfanumerici maiuscoli (CF persona fisica).
-    _IT_TIN_RE = [re.compile(r"^\d{11}$"), re.compile(r"^[A-Z0-9]{16}$")]
-
-    def _check_tin_format_for_entity(id_el):
-        if id_el is None:
-            return
-        res_cc = _t(_find(id_el, "globe:ResCountryCode", ns))
-        if not res_cc:
-            return
-        for t_el in _findall(id_el, "globe:TIN", ns):
-            t_val    = _t(t_el)
-            t_issued = _attr(t_el, "issuedBy")
-            t_tot    = _attr(t_el, "TypeOfTIN")
-            if t_issued != res_cc:
-                continue
-            if t_val in ("NOTIN", "") or t_tot in ("GIR3003","GIR3004"):
-                continue
-            if res_cc == "IT":
-                if not any(r.match(t_val) for r in _IT_TIN_RE):
-                    tin_errors["70004"].append(
-                        f"Entità IT: TIN={t_val!r} non valido (attesi 11 cifre o 16 alfanumerici)"
-                    )
-
-    if cs is not None:
-        for id_el in _findall(cs, ".//globe:CE/globe:ID", ns):
-            _check_tin_format_for_entity(id_el)
-        for id_el in _findall(cs, ".//globe:UPE/globe:OtherUPE/globe:ID", ns):
-            _check_tin_format_for_entity(id_el)
-        for id_el in _findall(cs, ".//globe:UPE/globe:ExcludedUPE/globe:ID", ns):
-            _check_tin_format_for_entity(id_el)
-
     descs = {
         "70001": "Se TIN/@TypeOfTIN = GIR3004, val=NOTIN, @unknown=TRUE, @issuedBy assente.",
         "70002": "Se TIN = NOTIN, TypeOfTIN=GIR3004, @unknown=TRUE, @issuedBy assente.",
         "70003": "Se TIN/@unknown=TRUE, allora TIN=NOTIN, TypeOfTIN=GIR3004, @issuedBy assente.",
-        "70004": "Se TIN/@issuedBy = ResCountryCode dell'entità, il formato TIN deve essere valido (IT: 11 cifre o 16 alfanumerici).",
+        "70004": "Se TIN/@issuedBy è la giurisdizione locale, il TIN deve essere valido.",
         "70005": "@issuedBy e @TypeOfTIN devono essere presenti (salvo eccezioni GIR3003/GIR3004).",
         "70006": "I TIN strutturali non possono usare TypeOfTIN=GIR3004 né @unknown=TRUE.",
         "70007": "Se TIN/@TypeOfTIN=GIR3003, il TIN deve rispettare il formato P2JJYYYYMMDDCCCXXX.",
@@ -3330,7 +3300,7 @@ def _write_xlsx(results: list[CheckResult], xml_path: Path, output_dir: Path,
     ws1.sheet_view.showGridLines = False
 
     counts = {s: sum(1 for r in results if r.status == s)
-              for s in ("OK","KO","WARN")}
+              for s in ("OK","KO","SKIP","WARN")}
     total = len(results)
     esito = "✅ VALIDO" if counts["KO"] == 0 else "❌ ERRORI PRESENTI"
 
@@ -3348,7 +3318,7 @@ def _write_xlsx(results: list[CheckResult], xml_path: Path, output_dir: Path,
         ("Check totali",total),
         ("✓ OK",        counts["OK"]),
         ("✗ KO",        counts["KO"]),
-
+        ("▷ SKIP",      counts["SKIP"]),
         ("⚠ WARN",      counts["WARN"]),
         ("Esito",       esito),
     ]
