@@ -177,7 +177,6 @@ def validate(xml_path: Path, output_dir: Path | None = None) -> Path:
     xml_path   = Path(xml_path)
     output_dir = Path(output_dir) if output_dir else xml_path.parent
     output_dir.mkdir(parents=True, exist_ok=True)
-
     # Parse
     try:
         tree = etree.parse(str(xml_path))
@@ -201,12 +200,57 @@ def validate(xml_path: Path, output_dir: Path | None = None) -> Path:
     results += _check_severe(root)
     results += _check_other(root)
 
-    return _write_xlsx(results, xml_path, output_dir, guid_resolved=guid_resolved)
+    version_fixed = any(r.code == "50003" and r.status == "WARN" for r in results)
 
-# ── 8.1 FILE ERRORS (50001-50004) ────────────────────────────────────────────
+    return _write_xlsx(results, xml_path, output_dir, guid_resolved=guid_resolved, version_fixed=version_fixed)
+
+# ── Helper: sanitize nome file ────────────────────────────────────────────────
+
+def _sanitize_filename(name: str) -> str:
+    """Rimuove spazi e caratteri speciali dal nome file."""
+    name = re.sub(r"\s+", "_", name)
+    name = re.sub(r"[^\w\-.]", "", name)
+    name = name.strip(".-_")
+    return name or "output"
+
+# ── 8.1 FILE ERRORS (50001-50004) + controlli integrità file (C0000/C0001/C0004) ──────
 
 def _check_file_errors(root, xml_path: Path) -> list[CheckResult]:
     out = []
+
+    # Leggi i primi byte del file una sola volta per i controlli di encoding
+    with open(xml_path, "rb") as f:
+        raw = f.read()
+
+    # C0000 – BOM UTF-8
+    r = CheckResult("C0000","Il file non deve contenere il BOM UTF-8.","/GLOBE_OECD")
+    if raw[:3] == b"\xef\xbb\xbf":
+        r.ko("BOM UTF-8 rilevato (EF BB BF all'inizio del file). Salvare il file in UTF-8 senza BOM.")
+    out.append(r)
+
+    # C0001 – Encoding UTF-8 valido (tutti i byte sono UTF-8 validi)
+    r = CheckResult("C0001","Il file deve essere codificato in UTF-8 valido.","/GLOBE_OECD")
+    try:
+        raw_check = raw[3:] if raw[:3] == b"\xef\xbb\xbf" else raw
+        raw_check.decode("utf-8")
+    except UnicodeDecodeError as ude:
+        r.ko(f"Byte non UTF-8 validi: {ude}")
+    out.append(r)
+
+    # C0004 – Caratteri speciali XML non codificati come entità
+    r = CheckResult("C0004","I caratteri speciali XML devono essere codificati come entità predefinite.","/GLOBE_OECD")
+    # Cerca sequenze vietate nel testo grezzo (fuori dai tag): & non seguito da amp;/lt;/gt;/apos;/quot;/#
+    import re as _re
+    raw_text = (raw[3:] if raw[:3] == b"\xef\xbb\xbf" else raw).decode("utf-8", errors="replace")
+    # Trova & non validi (non parte di entità)
+    bad_amp = _re.findall(r"&(?!amp;|lt;|gt;|apos;|quot;|#)", raw_text)
+    if bad_amp:
+        # Trova la prima occorrenza con numero di riga
+        for i, line in enumerate(raw_text.splitlines(), 1):
+            if _re.search(r"&(?!amp;|lt;|gt;|apos;|quot;|#)", line):
+                r.ko(f"Carattere '&' non codificato come entità alla riga {i}: {line.strip()[:80]!r}")
+                break
+    out.append(r)
 
     # 50001 – file leggibile (già superato se siamo qui)
     out.append(CheckResult(
@@ -223,20 +267,18 @@ def _check_file_errors(root, xml_path: Path) -> list[CheckResult]:
         r.ko(f"Radice trovata: {root.tag}")
     out.append(r)
 
-    # 50003 – attributo version
+    # 50003 – attributo version: se assente viene corretto automaticamente in-memory
     r = CheckResult("50003","GLOBE_OECD/@version presente e valorizzato.",
                     "/GLOBE_OECD/@version")
     ver = root.get("version","")
     if not ver:
-        r.ko("Attributo 'version' assente o vuoto.")
+        root.set("version", "1.0")
+        r.warn("Attributo 'version' assente o vuoto: impostato automaticamente a '1.0' in-memory.")
     out.append(r)
 
-    # 50004 – encoding UTF-8 (lxml lo normalizza sempre; segnaliamo solo se BOM)
-    r = CheckResult("50004","Il file è codificato UTF-8 senza BOM.",
-                    "/GLOBE_OECD")
-    with open(xml_path, "rb") as f:
-        bom = f.read(3)
-    if bom == b"\xef\xbb\xbf":
+    # 50004 – BOM (alias leggibile del C0000 già controllato sopra)
+    r = CheckResult("50004","Il file è codificato UTF-8 senza BOM.","/GLOBE_OECD")
+    if raw[:3] == b"\xef\xbb\xbf":
         r.ko("BOM UTF-8 rilevato (non ammesso).")
     out.append(r)
 
@@ -748,6 +790,10 @@ def _check_other(root) -> list[CheckResult]:
                 tin_errors["70003"].append(
                     f"@unknown=TRUE ma val={val!r} TypeOfTIN={tot!r} issuedBy={issued!r}"
                 )
+        # 70004 – verifica formato TIN per giurisdizione IT (semplificata)
+        if issued == "IT" and val not in ("NOTIN","") and tot not in ("GIR3003","GIR3004"):
+            if not (re.match(r"^\d{11}$", val) or re.match(r"^[A-Z0-9]{16}$", val)):
+                tin_errors["70004"].append(f"TIN IT non valido: {val!r}")
         # 70005
         if not tot:
             tin_errors["70005"].append(f"@TypeOfTIN assente (val={val!r})")
@@ -775,45 +821,11 @@ def _check_other(root) -> list[CheckResult]:
                     f"TIN strutturale con GIR3004/unknown: val={_t(t_el)!r}"
                 )
 
-    # 70004 – verifica formato TIN per giurisdizione locale
-    # Per ogni entità nella CorporateStructure, se issuedBy == ResCountryCode dell'entità
-    # il formato TIN deve essere valido per quel paese.
-    # IT: 11 cifre numeriche (P.IVA) o 16 alfanumerici maiuscoli (CF persona fisica).
-    _IT_TIN_RE = [re.compile(r"^\d{11}$"), re.compile(r"^[A-Z0-9]{16}$")]
-
-    def _check_tin_format_for_entity(id_el):
-        if id_el is None:
-            return
-        res_cc = _t(_find(id_el, "globe:ResCountryCode", ns))
-        if not res_cc:
-            return
-        for t_el in _findall(id_el, "globe:TIN", ns):
-            t_val    = _t(t_el)
-            t_issued = _attr(t_el, "issuedBy")
-            t_tot    = _attr(t_el, "TypeOfTIN")
-            if t_issued != res_cc:
-                continue
-            if t_val in ("NOTIN", "") or t_tot in ("GIR3003","GIR3004"):
-                continue
-            if res_cc == "IT":
-                if not any(r.match(t_val) for r in _IT_TIN_RE):
-                    tin_errors["70004"].append(
-                        f"Entità IT: TIN={t_val!r} non valido (attesi 11 cifre o 16 alfanumerici)"
-                    )
-
-    if cs is not None:
-        for id_el in _findall(cs, ".//globe:CE/globe:ID", ns):
-            _check_tin_format_for_entity(id_el)
-        for id_el in _findall(cs, ".//globe:UPE/globe:OtherUPE/globe:ID", ns):
-            _check_tin_format_for_entity(id_el)
-        for id_el in _findall(cs, ".//globe:UPE/globe:ExcludedUPE/globe:ID", ns):
-            _check_tin_format_for_entity(id_el)
-
     descs = {
         "70001": "Se TIN/@TypeOfTIN = GIR3004, val=NOTIN, @unknown=TRUE, @issuedBy assente.",
         "70002": "Se TIN = NOTIN, TypeOfTIN=GIR3004, @unknown=TRUE, @issuedBy assente.",
         "70003": "Se TIN/@unknown=TRUE, allora TIN=NOTIN, TypeOfTIN=GIR3004, @issuedBy assente.",
-        "70004": "Se TIN/@issuedBy = ResCountryCode dell'entità, il formato TIN deve essere valido (IT: 11 cifre o 16 alfanumerici).",
+        "70004": "Se TIN/@issuedBy è la giurisdizione locale, il TIN deve essere valido.",
         "70005": "@issuedBy e @TypeOfTIN devono essere presenti (salvo eccezioni GIR3003/GIR3004).",
         "70006": "I TIN strutturali non possono usare TypeOfTIN=GIR3004 né @unknown=TRUE.",
         "70007": "Se TIN/@TypeOfTIN=GIR3003, il TIN deve rispettare il formato P2JJYYYYMMDDCCCXXX.",
@@ -3319,8 +3331,8 @@ def _fill_for(status: str):
 
 
 def _write_xlsx(results: list[CheckResult], xml_path: Path, output_dir: Path,
-                guid_resolved: bool = False) -> Path:
-    stem    = xml_path.stem
+                guid_resolved: bool = False, version_fixed: bool = False) -> Path:
+    stem    = _sanitize_filename(xml_path.stem)
     out_path = output_dir / f"{stem}_validation_report.xlsx"
     wb = Workbook()
 
@@ -3352,6 +3364,10 @@ def _write_xlsx(results: list[CheckResult], xml_path: Path, output_dir: Path,
         ("⚠ WARN",      counts["WARN"]),
         ("Esito",       esito),
     ]
+    if version_fixed:
+        info.insert(2, ("⚠ Version auto-fix",
+                        "L'attributo GLOBE_OECD/@version era assente: impostato automaticamente a '1.0'. "
+                        "Il file sorgente NON è stato modificato."))
     if guid_resolved:
         info.insert(2, ("⚠ Placeholder GUID",
                         "Il file conteneva {Guid:D} non risolti. "
@@ -3366,7 +3382,7 @@ def _write_xlsx(results: list[CheckResult], xml_path: Path, output_dir: Path,
         if k == "Esito":
             c.fill = _FILL_OK if "VALIDO" in str(v) else _FILL_KO
             c.font = Font(bold=True)
-        elif k.startswith("⚠ Placeholder"):
+        elif k.startswith("⚠ Placeholder") or k.startswith("⚠ Version"):
             c.fill = _FILL_SKIP
             ws1.cell(row=i, column=1).fill = _FILL_SKIP
 
@@ -3428,29 +3444,3 @@ def _write_xlsx(results: list[CheckResult], xml_path: Path, output_dir: Path,
 
     wb.save(str(out_path))
     return out_path
-
-# ── CLI ───────────────────────────────────────────────────────────────────────
-
-if __name__ == "__main__":
-    import argparse, sys
-
-    parser = argparse.ArgumentParser(
-        description="PILLAR – Validatore GloBE/DAC9 (Allegato 2, 13/03/2026)"
-    )
-    parser.add_argument("xml", help="File XML GloBE da validare")
-    parser.add_argument(
-        "--output", "-o",
-        help="Directory di output per il report XLSX (default: stessa cartella del file XML)",
-        default=None,
-    )
-    args = parser.parse_args()
-
-    xml_path = Path(args.xml)
-    if not xml_path.exists():
-        print(f"Errore: file non trovato: {xml_path}", file=sys.stderr)
-        sys.exit(1)
-
-    out_dir = Path(args.output) if args.output else None
-    print(f"Validazione: {xml_path.name} ...")
-    result = validate(xml_path, output_dir=out_dir)
-    print(f"Report generato: {result}")
