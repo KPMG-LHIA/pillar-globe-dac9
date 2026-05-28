@@ -94,55 +94,6 @@ def _resolve_guid_placeholders(root: etree._Element) -> etree._Element:
 
 
 # ---------------------------------------------------------------------------
-# Helper: rinomina file
-# ---------------------------------------------------------------------------
-
-def _sanitize_filename(name: str) -> str:
-    """
-    Rimuove o sostituisce caratteri non ammessi nel nome file.
-    Spazi → underscore; caratteri speciali rimossi; strip punti/trattini iniziali/finali.
-    """
-    name = re.sub(r"[\s]+", "_", name) # spazi rimossi e sostituiti con _
-    name = re.sub(r"[^\w\-.]", "", name) # si rimuove tutto tranne spazi, _ - .
-    name = name.strip(".-_") # rimuovi _ - . iniziali/finali
-    return name or "output"
-
-# ---------------------------------------------------------------------------
-# Controlli integrità file pre-incapsulamento
-# ---------------------------------------------------------------------------
-
-def _check_source_integrity(xml_path: Path) -> list[str]:
-    """
-    Esegue i controlli C0000/C0001/C0004 sul file sorgente.
-    Restituisce lista di messaggi di errore (vuota se tutto OK).
-    """
-    errors = []
-    with open(xml_path, "rb") as f:
-        raw = f.read()
-
-    # C0000 – BOM
-    if raw[:3] == b"\xef\xbb\xbf":
-        errors.append("C0000: BOM UTF-8 rilevato. Salvare il file in UTF-8 senza BOM.")
-
-    # C0001 – Encoding UTF-8 valido
-    try:
-        raw_check = raw[3:] if raw[:3] == b"\xef\xbb\xbf" else raw
-        raw_check.decode("utf-8")
-    except UnicodeDecodeError as ude:
-        errors.append(f"C0001: Encoding UTF-8 non valido: {ude}")
-
-    # C0004 – & non codificato come entità
-    raw_text = (raw[3:] if raw[:3] == b"\xef\xbb\xbf" else raw).decode("utf-8", errors="replace")
-    for i, line in enumerate(raw_text.splitlines(), 1):
-        if re.search(r"&(?!amp;|lt;|gt;|apos;|quot;|#)", line):
-            errors.append(
-                f"C0004: Carattere '&' non codificato come entità alla riga {i}: {line.strip()[:80]!r}"
-            )
-            break  # segnala solo la prima occorrenza
-
-    return errors
-
-# ---------------------------------------------------------------------------
 # Funzione principale
 # ---------------------------------------------------------------------------
 
@@ -150,6 +101,7 @@ def encapsulate(
     xml_path: str | Path,
     codice_fiscale: str,
     output_dir: str | Path | None = None,
+    archive_source: bool = False,
 ) -> Path:
     """
     Incapsula *xml_path* (file XML GloBE) nella shell telematica AdE.
@@ -158,6 +110,7 @@ def encapsulate(
         xml_path:        Percorso del file XML GloBE sorgente.
         codice_fiscale:  CF numerico (11 cifre) o alfanumerico (16 char) del fornitore.
         output_dir:      Directory di output. Default: stessa directory di xml_path.
+        archive_source:  Se True, sposta xml_path in uploads/archivio/ dopo l'elaborazione.
 
     Returns:
         Path del file _MSG.xml generato.
@@ -185,14 +138,7 @@ def encapsulate(
         out_dir = Path(output_dir)
         out_dir.mkdir(parents=True, exist_ok=True)
 
-    # Controlli integrità file sorgente (C0000/C0001/C0004)
-    integrity_errors = _check_source_integrity(xml_path)
-    if integrity_errors:
-        for err in integrity_errors:
-            print(f"  [shell] ⚠ {err}")
-        print("  [shell] Attenzione: il file presenta anomalie di integrità. Procedere con cautela.")
-
-    stem = _sanitize_filename(xml_path.stem)
+    stem = xml_path.stem
     out_path = out_dir / f"{stem}_MSG.xml"
 
     # --- Parse XML GloBE sorgente ---
@@ -203,9 +149,16 @@ def encapsulate(
     # --- Risolvi placeholder {Guid:D} in-memory (il sorgente non viene modificato) ---
     globe_root = _resolve_guid_placeholders(globe_root)
 
-    # --- Auto-fix version: se assente, imposta "1.0" in-memory ---
-    if not globe_root.get("version", ""):
-        globe_root.set("version", "1.0")
+    # --- Auto-fix version: normalizza l'attributo version su GLOBE_OECD ---
+    # Il file sorgente può avere: nessun version, version="x", globe:version="x", o entrambi.
+    # Lo XSD AdE richiede solo version="..." senza prefisso namespace.
+    ns_globe = f"{{{NS_GLOBE}}}"
+    ver = globe_root.get("version", "") or globe_root.get(f"{ns_globe}version", "")
+    for attr in list(globe_root.attrib):
+        if "version" in attr and attr != "version":
+            del globe_root.attrib[attr]
+    globe_root.set("version", ver if ver else "1.0")
+    if not ver:
         print("  [shell] ⚠ GLOBE_OECD/@version assente: impostato automaticamente a '1.0'.")
 
     # --- Costruisci struttura shell ---
@@ -241,6 +194,10 @@ def encapsulate(
     out_path.write_bytes(out_bytes)
 
     print(f"  [shell] Creato: {out_path.name}  ({len(out_bytes):,} byte)")
+
+    # --- Archiviazione sorgente (solo se richiesta e il file è in uploads/) ---
+    if archive_source:
+        _archive_file(xml_path)
 
     return out_path
 
@@ -278,12 +235,27 @@ def encapsulate_uploads(
                 xml_path=xf,
                 codice_fiscale=codice_fiscale,
                 output_dir=xf.parent,
+                archive_source=True,
             )
             results.append(msg)
         except Exception as exc:
             print(f"  [shell] ERRORE su {xf.name}: {exc}")
 
     return results
+
+
+# ---------------------------------------------------------------------------
+# Helper: archiviazione
+# ---------------------------------------------------------------------------
+
+def _archive_file(file_path: Path) -> None:
+    """Sposta *file_path* in <parent>/archivio/<YYYYMMDD_HHMMSS>_<nome>."""
+    archive_dir = file_path.parent / "archivio"
+    archive_dir.mkdir(exist_ok=True)
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    dest = archive_dir / f"{ts}_{file_path.name}"
+    shutil.move(str(file_path), str(dest))
+    print(f"  [shell] Archiviato: {dest.name}")
 
 
 # ---------------------------------------------------------------------------
