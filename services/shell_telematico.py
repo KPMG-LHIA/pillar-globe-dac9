@@ -165,6 +165,18 @@ def encapsulate(
     # --- Risolvi placeholder {Guid:D} in-memory (il sorgente non viene modificato) ---
     globe_root = _resolve_guid_placeholders(globe_root)
 
+    # --- Auto-fix version: normalizza l'attributo version su GLOBE_OECD ---
+    # Il file sorgente può avere: nessun version, version="x", globe:version="x", o entrambi.
+    # Lo XSD AdE richiede solo version="..." senza prefisso namespace.
+    ns_globe = f"{{{NS_GLOBE}}}"
+    ver = globe_root.get("version", "") or globe_root.get(f"{ns_globe}version", "")
+    for attr in list(globe_root.attrib):
+        if "version" in attr and attr != "version":
+            del globe_root.attrib[attr]
+    globe_root.set("version", ver if ver else "1.0")
+    if not ver:
+        print("  [shell] ⚠ GLOBE_OECD/@version assente: impostato automaticamente a '1.0'.")
+
     # --- Costruisci struttura shell ---
     root = etree.Element(f"{{{NS_TM}}}Messaggio", nsmap=NSMAP_ROOT)
     root.set(f"{{{NS_XSI}}}schemaLocation", SCHEMA_LOCATION)
