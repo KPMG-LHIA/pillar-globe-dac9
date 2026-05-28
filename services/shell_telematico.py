@@ -94,6 +94,22 @@ def _resolve_guid_placeholders(root: etree._Element) -> etree._Element:
 
 
 # ---------------------------------------------------------------------------
+# Helper: sanitize nome file
+# ---------------------------------------------------------------------------
+
+def _sanitize_filename(name: str) -> str:
+    """
+    Rimuove o sostituisce caratteri non ammessi nel nome file.
+    Spazi e parentesi → underscore; caratteri speciali rimossi;
+    underscore multipli collassati; strip trattini/punti iniziali/finali.
+    """
+    name = re.sub(r"[\s\(\)]+", "_", name)   # spazi e parentesi → _
+    name = re.sub(r"[^\w\-.]", "", name)       # rimuovi tutto tranne alfanumerici, _ - .
+    name = re.sub(r"_+", "_", name)            # collassa underscore multipli
+    name = name.strip(".-_")                   # rimuovi _ - . iniziali/finali
+    return name or "output"
+
+# ---------------------------------------------------------------------------
 # Funzione principale
 # ---------------------------------------------------------------------------
 
@@ -138,7 +154,7 @@ def encapsulate(
         out_dir = Path(output_dir)
         out_dir.mkdir(parents=True, exist_ok=True)
 
-    stem = xml_path.stem
+    stem = _sanitize_filename(xml_path.stem)
     out_path = out_dir / f"{stem}_MSG.xml"
 
     # --- Parse XML GloBE sorgente ---
@@ -148,18 +164,6 @@ def encapsulate(
 
     # --- Risolvi placeholder {Guid:D} in-memory (il sorgente non viene modificato) ---
     globe_root = _resolve_guid_placeholders(globe_root)
-
-    # --- Auto-fix version: normalizza l'attributo version su GLOBE_OECD ---
-    # Il file sorgente può avere: nessun version, version="x", globe:version="x", o entrambi.
-    # Lo XSD AdE richiede solo version="..." senza prefisso namespace.
-    ns_globe = f"{{{NS_GLOBE}}}"
-    ver = globe_root.get("version", "") or globe_root.get(f"{ns_globe}version", "")
-    for attr in list(globe_root.attrib):
-        if "version" in attr and attr != "version":
-            del globe_root.attrib[attr]
-    globe_root.set("version", ver if ver else "1.0")
-    if not ver:
-        print("  [shell] ⚠ GLOBE_OECD/@version assente: impostato automaticamente a '1.0'.")
 
     # --- Costruisci struttura shell ---
     root = etree.Element(f"{{{NS_TM}}}Messaggio", nsmap=NSMAP_ROOT)
