@@ -16,7 +16,7 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 BASE_DIR    = Path(__file__).parent
 UPLOAD_DIR  = BASE_DIR / "uploads"
 RESULTS_DIR = BASE_DIR / "results"
-DEFAULT_CF  = os.getenv("PILLAR_CF", "")
+DEFAULT_CF  = os.getenv("PILLAR_CF", "00731410155")
 
 UPLOAD_DIR.mkdir(exist_ok=True)
 RESULTS_DIR.mkdir(exist_ok=True)
