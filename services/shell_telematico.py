@@ -176,6 +176,16 @@ def encapsulate(
     globe_root.set("version", ver if ver else "1.0")
     if not ver:
         print("  [shell] ⚠ GLOBE_OECD/@version assente: impostato automaticamente a '1.0'.")
+    
+    _NS_MAP_GLOBE = {
+        "globe": NS_GLOBE,
+        "stf":   NS_STF,
+        "iso":   NS_ISO,
+        "xsi":   NS_XSI,
+    }
+    _raw = etree.tostring(globe_root)
+    globe_root = etree.fromstring(_raw)
+    etree.cleanup_namespaces(globe_root, top_nsmap=_NS_MAP_GLOBE)
 
     # --- Costruisci struttura shell ---
     root = etree.Element(f"{{{NS_TM}}}Messaggio", nsmap=NSMAP_ROOT)
