@@ -24,7 +24,7 @@ RESULTS_DIR.mkdir(exist_ok=True)
 CLIENT_ID     = os.getenv("AZURE_AD_CLIENT_ID", "")
 CLIENT_SECRET = os.getenv("AZURE_AD_CLIENT_SECRET", "")
 TENANT_ID     = os.getenv("AZURE_TENANT_ID", "")
-AUTHORITY     = "https://login.microsoftonline.com/organizations"
+AUTHORITY     = "https://login.microsoftonline.com/" + TENANT_ID
 SCOPE         = ["User.Read"]
 
 app = Flask(__name__)
