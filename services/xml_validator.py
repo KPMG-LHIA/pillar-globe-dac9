@@ -744,10 +744,14 @@ def _check_other(root):
     out.append(r)
 
     # ── 8.3.7 CE/QIIR (70033-70035) ──────────────────────────────────────────
-    # 70033 FIX: include UPE TINs nel lookup
-    r=CheckResult("70033","CE/QIIR/Exception/TIN deve corrispondere al TIN di un altro CE o UPE.","/GLOBE_OECD/GLOBEBody/GeneralSection/.../CE/QIIR/Exception/TIN")
-    bad=[]
-    valid_tins=_ce_tins()|_upe_tins()
+    # 70033: la regola AdE richiede che Exception/TIN corrisponda a un altro CE
+    # nella CorporateStructure (scope: solo CE/ID/TIN, non UPE).
+    # Se il TIN è quello di OtherUPE/ExcludedUPE viene segnalato come WARN
+    # (semanticamente corretto — la UPE esercita la QIIR — ma non strettamente
+    # conforme al testo letterale della regola AdE).
+    r=CheckResult("70033","CE/QIIR/Exception/TIN deve corrispondere al TIN di un altro CE nella CorporateStructure.","/GLOBE_OECD/GLOBEBody/GeneralSection/.../CE/QIIR/Exception/TIN")
+    bad_ko=[]; bad_warn=[]
+    ce_tins_set=_ce_tins(); upe_tins_set=_upe_tins()
     if cs:
         for ce in _findall(cs,"globe:CE",ns):
             id_=_find(ce,"globe:ID",ns); own=_t(_find(id_,"globe:TIN",ns)) if id_ else ""
@@ -755,9 +759,15 @@ def _check_other(root):
             if q is None: continue
             for exc in _findall(q,"globe:Exception",ns):
                 te=_find(exc,"globe:TIN",ns); tv=_t(te)
-                if tv and tv not in valid_tins: bad.append(f"Exception/TIN={tv!r} non corrisponde a nessun CE né UPE{_src(te)}")
-                if tv and tv==own: bad.append(f"Exception/TIN={tv!r} uguale al CE stesso{_src(te)}")
-    if bad: r.ko(bad[0])
+                if not tv: continue
+                if tv==own:
+                    bad_ko.append(f"Exception/TIN={tv!r} uguale al CE stesso{_src(te)}")
+                elif tv not in ce_tins_set and tv in upe_tins_set:
+                    # TIN è della UPE: l'AdE lo segnala come errore 70033
+                    bad_ko.append(f"Exception/TIN={tv!r} corrisponde a OtherUPE/ExcludedUPE, non a un CE{_src(te)}")
+                elif tv not in ce_tins_set and tv not in upe_tins_set:
+                    bad_ko.append(f"Exception/TIN={tv!r} non corrisponde a nessun CE né UPE{_src(te)}")
+    if bad_ko: r.ko(bad_ko[0])
     out.append(r)
 
     # 70034 FIX: controlla Art2.1.3 solo se elemento presente
@@ -2071,17 +2081,32 @@ def _check_ce_ngi(jur_sections, ns):
     if bad: r.ko(bad[0])
     out.append(r)
 
-    # 70121 FIX: scope = singolo CEComputation (non aggregato ETR)
-    r=CheckResult("70121","Ogni AdjustmentItem in CEComputation/DeferTaxAdjustAmt/Adjustment non può comparire più di una volta per CEComputation.","JurisdictionSection/.../CEComputation/AdjustedCoveredTax/DeferTaxAdjustAmt/Adjustment/AdjustmentItem")
+    # 70121: scope = ETRComputation (tutti i CEComputation aggregati), come l'AdE.
+    # Il testo della regola dice "per ETR element": l'AdE aggrega tutti i
+    # CEComputation/DeferTaxAdjustAmt/Adjustment dentro lo stesso ETRComputation
+    # e segnala se lo stesso AdjustmentItem code compare più di una volta
+    # su CE diversi. Due CEComputation distinti non possono quindi usare lo
+    # stesso codice nel loro DeferTaxAdjustAmt/Adjustment.
+    r=CheckResult("70121","Ogni AdjustmentItem in CEComputation/DeferTaxAdjustAmt/Adjustment non può comparire più di una volta per ETR (scope: tutti i CEComputation nell'ETRComputation).","JurisdictionSection/.../CEComputation/AdjustedCoveredTax/DeferTaxAdjustAmt/Adjustment/AdjustmentItem")
     bad=[]
     for js in jur_sections:
         jn=_t(_find(js,"globe:Jurisdiction",ns))
-        for ce in _findall(js,".//globe:CEComputation",ns):
-            dta=_find(ce,"globe:AdjustedCoveredTax/globe:DeferTaxAdjustAmt",ns)
-            if dta is None: continue
-            items=[_t(_find(adj,"globe:AdjustmentItem",ns)) for adj in _findall(dta,"globe:Adjustment",ns)]
-            dups={x for x in items if items.count(x)>1}
-            if dups: bad.append(f"{jn}: CEComputation DTA Adjustment duplicati: {dups}")
+        for ec in _findall(js,".//globe:ETRComputation",ns):
+            # Raccoglie tutti gli AdjustmentItem da tutti i CEComputation dentro questo ETRComputation
+            all_items=[]
+            for ce in _findall(ec,"globe:CEComputation",ns):
+                dta=_find(ce,"globe:AdjustedCoveredTax/globe:DeferTaxAdjustAmt",ns)
+                if dta is None: continue
+                for adj in _findall(dta,"globe:Adjustment",ns):
+                    ai_el=_find(adj,"globe:AdjustmentItem",ns)
+                    if ai_el is not None: all_items.append((_t(ai_el), ai_el))
+            # Controlla duplicati aggregando su tutti i CE dell'ETRComputation
+            codes=[code for code,_ in all_items]
+            dups={x for x in codes if codes.count(x)>1}
+            if dups:
+                # Trova la prima occorrenza duplicata per il messaggio
+                first_dup_el=next((el for code,el in all_items if code in dups), None)
+                bad.append(f"{jn}: DeferTaxAdjustAmt/Adjustment AdjustmentItem duplicati tra CEComputation: {dups}{_src(first_dup_el)}")
     if bad: r.ko(bad[0])
     out.append(r)
 
