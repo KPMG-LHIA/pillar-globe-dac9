@@ -62,6 +62,20 @@ class CheckResult:
         if d: self.detail=d
         return self
 
+def _ko_all(r: "CheckResult", bad: list, max_items: int = 50) -> "CheckResult":
+    """
+    Imposta r come KO riportando TUTTE le occorrenze in bad (non solo la prima).
+    Le occorrenze sono separate da newline nel campo detail.
+    max_items: quante occorrenze mostrare al massimo (default 50).
+    """
+    if not bad:
+        return r
+    items = bad[:max_items]
+    suffix = f"\n… (+{len(bad)-max_items} altri)" if len(bad) > max_items else ""
+    r.status = CheckResult.STATUS_KO
+    r.detail = "\n".join(items) + suffix
+    return r
+
 # ── XML helpers ───────────────────────────────────────────────────────────────
 def _t(el) -> str:
     return "" if el is None else (el.text or "").strip()
@@ -220,7 +234,7 @@ def _check_severe(root):
     r=CheckResult("60005","Se DocTypeIndic è OECD2/OECD3, deve appartenere alla stessa sottosezione del CorrDocRefId.","/GLOBE_OECD/GLOBEBody/*/DocSpec/DocTypeIndic")
     bad=[f"DocSpec OECD2/3 senza CorrDocRefId" for ds in all_docspecs
          if _t(_find(ds,"globe:DocTypeIndic",ns)) in ("OECD2","OECD3") and not _t(_find(ds,"globe:CorrDocRefId",ns))]
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     # 60006
@@ -251,7 +265,7 @@ def _check_severe(root):
     r=CheckResult("60011","DocRefId nel formato [SendingCountry][ReportingYear][UniqueID].","/GLOBE_OECD/GLOBEBody/*/DocSpec/DocRefId")
     bad=[_t(_find(ds,"globe:DocRefId",ns))[:40] for ds in all_docspecs
          if _t(_find(ds,"globe:DocRefId",ns)) and not DOCREFID_RE.match(_t(_find(ds,"globe:DocRefId",ns)))]
-    if bad: r.ko(f"Formato non valido: {bad[0]!r}" + (f" (+{len(bad)-1})" if len(bad)>1 else ""))
+    _ko_all(r, [f"Formato non valido: {b!r}" for b in bad])
     out.append(r)
 
     # 60012
@@ -372,7 +386,7 @@ def _check_severe_formulas(jur_sections, ns):
             if ngi is None or etr is None or ngi<=0: continue
             if abs(act/ngi - etr)>Decimal("0.0001"):
                 errs.append(f"{jn}: ETRRate={etr} ≠ {act}/{ngi}={act/ngi:.6f}{_src(er)}")
-    if errs: r.ko("; ".join(errs[:3]))
+    _ko_all(r, errs)
     out.append(r)
 
     # 60026
@@ -390,7 +404,7 @@ def _check_severe_formulas(jur_sections, ns):
             qd=_decimal(_t(_find(oc,"globe:QDMTT/globe:Amount",ns))) or Decimal(0)
             expected=(pct*exp)+an+aa-qd
             if abs(expected-tut)>Decimal("1"): errs.append(f"{jn}: TopUpTax={tut} ≠ {expected:.2f}{_src(te)}")
-    if errs: r.ko("; ".join(errs[:3]))
+    _ko_all(r, errs)
     out.append(r)
 
     # 60027
@@ -405,7 +419,7 @@ def _check_severe_formulas(jur_sections, ns):
                 tut=_decimal(_t(te)); sh=_decimal(_t(se)); off=_decimal(_t(oe)) or Decimal(0)
                 if tut is None or sh is None: continue
                 if abs(sh-off-tut)>Decimal("1"): errs.append(f"{jn}: TopUpTax={tut} ≠ {sh}-{off}={sh-off}{_src(te)}")
-    if errs: r.ko("; ".join(errs[:3]))
+    _ko_all(r, errs)
     out.append(r)
 
     # 60028
@@ -423,7 +437,7 @@ def _check_severe_formulas(jur_sections, ns):
             adds=sum((_decimal(_t(x)) or Decimal(0)) for x in _findall(adf,".//globe:MainEntityPEandFTE/globe:Additions",ns))
             reds=sum((_decimal(_t(x)) or Decimal(0)) for x in _findall(adf,".//globe:MainEntityPEandFTE/globe:Reductions",ns))
             if abs(fan+adds-reds-tot)>Decimal("1"): errs.append(f"{jn}: Total={tot} ≠ {fan}+{adds}-{reds}{_src(te)}")
-    if errs: r.ko("; ".join(errs[:3]))
+    _ko_all(r, errs)
     out.append(r)
 
     return out
@@ -494,7 +508,7 @@ def _check_other(root):
            "70007":"Se TypeOfTIN=GIR3003, il TIN deve rispettare il formato P2JJYYYYMMDDCCCXXX."}
     for code,errs in terrs.items():
         r=CheckResult(code,descs[code],"/GLOBE_OECD/GLOBEBody//TIN")
-        if errs: r.ko(errs[0]+(f" (+{len(errs)-1})" if len(errs)>1 else ""))
+        _ko_all(r, errs)
         out.append(r)
 
     # ── 8.3.2 RecJurCode/UPE/Rules (70008-70012) ─────────────────────────────
@@ -526,7 +540,7 @@ def _check_other(root):
     if cs:
         for e in _findall(cs,".//globe:UPE/globe:OtherUPE/globe:ID",ns):
             if len(_findall(e,"globe:ResCountryCode",ns))>1: bad.append(f"OtherUPE con più ResCountryCode{_src(e)}")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     r=CheckResult("70011","Per CE, ID/ResCountryCode deve avere un solo valore.","/GLOBE_OECD/GLOBEBody/GeneralSection/.../CE/ID/ResCountryCode")
@@ -534,7 +548,7 @@ def _check_other(root):
     if cs:
         for e in _findall(cs,".//globe:CE/globe:ID",ns):
             if len(_findall(e,"globe:ResCountryCode",ns))>1: bad.append(f"CE con più ResCountryCode{_src(e)}")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     r=CheckResult("70012","Entità stesso ResCountryCode → stesso Rules (salvo GIR204).","/GLOBE_OECD/GLOBEBody/GeneralSection/.../Rules")
@@ -547,7 +561,7 @@ def _check_other(root):
                 if rc and "GIR204" not in rv:
                     if rc not in rr: rr[rc]=rv
                     elif rr[rc]!=rv: bad.append(f"Giurisdizione {rc}: Rules incoerenti")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     # ── 8.3.3 GloBEStatus CE (70013-70021) ───────────────────────────────────
@@ -564,7 +578,7 @@ def _check_other(root):
     def _gspair(code,desc,fn,xpath):
         r=CheckResult(code,desc,xpath)
         bad=[f"CE TIN={t!r} GloBEStatus={g}{_src(ce_el_map.get(t))}" for t,g in ce_gs.items() if fn(g)]
-        if bad: r.ko(bad[0])
+        _ko_all(r, bad)
         return r
 
     out.append(_gspair("70013","Se GloBEStatus contiene GIR313, non deve contenere GIR314.",lambda g:"GIR313" in g and "GIR314" in g,"/GLOBE_OECD/GLOBEBody/GeneralSection/.../CE/ID/GloBEStatus"))
@@ -596,7 +610,7 @@ def _check_other(root):
                 oc=_find(ce,"globe:OwnershipChange",ns)
                 if oc is None or not _t(_find(oc,"globe:ChangeDate",ns)):
                     bad.append(f"CE {_t(_find(id_,'globe:TIN',ns))!r} ha {gs&{'GIR316','GIR318'}} ma manca OwnershipChange{_src(id_)}")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     # ── 8.3.4 OwnershipChange (70022-70025) ──────────────────────────────────
@@ -610,7 +624,7 @@ def _check_other(root):
                 if cd and cd<period_start:
                     tin=_t(_find(_find(ce,"globe:ID",ns),"globe:TIN",ns)) if _find(ce,"globe:ID",ns) else "?"
                     bad.append(f"CE {tin!r}: ChangeDate={cd} < Start={period_start}{_src(cd_el)}")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     r=CheckResult("70023","OwnershipChange/ChangeDate non può essere successiva a Period/End.","/GLOBE_OECD/GLOBEBody/GeneralSection/.../CE/OwnershipChange/ChangeDate")
@@ -623,7 +637,7 @@ def _check_other(root):
                 if cd and cd>period_end:
                     tin=_t(_find(_find(ce,"globe:ID",ns),"globe:TIN",ns)) if _find(ce,"globe:ID",ns) else "?"
                     bad.append(f"CE {tin!r}: ChangeDate={cd} > End={period_end}{_src(cd_el)}")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     r=CheckResult("70024","PreOwnership non deve essere compilato quando PreGloBEStatus=GIR719.","/GLOBE_OECD/GLOBEBody/GeneralSection/.../CE/OwnershipChange/PreOwnership")
@@ -633,7 +647,7 @@ def _check_other(root):
             oc=_find(ce,"globe:OwnershipChange",ns)
             if oc and _t(_find(oc,"globe:PreGloBEStatus",ns))=="GIR719" and _find(oc,"globe:PreOwnership",ns) is not None:
                 bad.append(f"OwnershipChange con PreGloBEStatus=GIR719 ha PreOwnership{_src(oc)}")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     r=CheckResult("70025","Se PreOwnership/OwnershipType contiene GIR805/GIR806, TIN deve essere GIR3004/NOTIN.","/GLOBE_OECD/GLOBEBody/GeneralSection/.../CE/OwnershipChange/PreOwnership/TIN")
@@ -648,7 +662,7 @@ def _check_other(root):
                     for te in _findall(po,"globe:TIN",ns):
                         if _attr(te,"TypeOfTIN")!="GIR3004" or _t(te)!="NOTIN":
                             bad.append(f"PreOwnership GIR805/806: TIN={_t(te)!r} TypeOfTIN={_attr(te,'TypeOfTIN')!r}{_src(te)}")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     # ── 8.3.5 Ownership (70026-70031) ────────────────────────────────────────
@@ -685,7 +699,7 @@ def _check_other(root):
         ]:
             r=CheckResult(code,desc,"/GLOBE_OECD/GLOBEBody/GeneralSection/.../CE/Ownership")
             bad=[e for ce in _findall(cs,"globe:CE",ns) for e in [fn(ce,ns)] if e]
-            if bad: r.ko(bad[0])
+            _ko_all(r, bad)
             out.append(r)
 
     r=CheckResult("70029","Se OwnershipType contiene GIR801, TIN deve corrispondere a un TIN UPE.","/GLOBE_OECD/GLOBEBody/GeneralSection/.../CE/Ownership/TIN")
@@ -697,7 +711,7 @@ def _check_other(root):
                 if "GIR801" in set((_t(_find(ow,"globe:OwnershipType",ns)) or "").split()):
                     te=_find(ow,"globe:TIN",ns); tv=_t(te)
                     if tv and ut and tv not in ut: bad.append(f"GIR801 TIN={tv!r} non in UPE{_src(te)}")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     r=CheckResult("70030","Se OwnershipType contiene GIR802/803/804, TIN deve corrispondere a un CE TIN.","/GLOBE_OECD/GLOBEBody/GeneralSection/.../CE/Ownership/TIN")
@@ -710,7 +724,7 @@ def _check_other(root):
                 if ots&{"GIR802","GIR803","GIR804"}:
                     te=_find(ow,"globe:TIN",ns); tv=_t(te)
                     if tv and ct and tv not in ct: bad.append(f"{ots&{'GIR802','GIR803','GIR804'}} TIN={tv!r} non in CE TINs{_src(te)}")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     r=CheckResult("70031","Se GloBEStatus=GIR305, Ownership/TIN deve essere uguale a un TIN con GIR306.","/GLOBE_OECD/GLOBEBody/GeneralSection/.../CE/Ownership/TIN")
@@ -727,7 +741,7 @@ def _check_other(root):
                     te=_find(ow,"globe:TIN",ns); ov=_t(te)
                     if ov and t306 and ov not in t306:
                         bad.append(f"CE {_t(_find(id_,'globe:TIN',ns))!r} GIR305: Ownership/TIN={ov!r} non in GIR306 TINs{_src(te)}")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     # ── 8.3.6 QIIR (70032) ───────────────────────────────────────────────────
@@ -740,7 +754,7 @@ def _check_other(root):
                 id_=_find(ce,"globe:ID",ns); rules=set((_t(_find(id_,"globe:Rules",ns)) or "").split()) if id_ else set()
                 if not rules&{"GIR201","GIR202"}:
                     bad.append(f"CE {_t(_find(id_,'globe:TIN',ns)) if id_ else '?'!r} ha QIIR ma Rules={rules}{_src(q)}")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     # ── 8.3.7 CE/QIIR (70033-70035) ──────────────────────────────────────────
@@ -767,7 +781,7 @@ def _check_other(root):
                     bad_ko.append(f"Exception/TIN={tv!r} corrisponde a OtherUPE/ExcludedUPE, non a un CE{_src(te)}")
                 elif tv not in ce_tins_set and tv not in upe_tins_set:
                     bad_ko.append(f"Exception/TIN={tv!r} non corrisponde a nessun CE né UPE{_src(te)}")
-    if bad_ko: r.ko(bad_ko[0])
+    _ko_all(r, bad_ko)
     out.append(r)
 
     # 70034 FIX: controlla Art2.1.3 solo se elemento presente
@@ -785,7 +799,7 @@ def _check_other(root):
                     se=_find(a213,"globe:Status",ns)
                     if _t(se).upper()!="TRUE":
                         bad.append(f"POPE-IPE=GIR902 Exception.Art2.1.3/Status={_t(se)!r}{_src(se) if se else _src(a213)}")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     # 70035 FIX: controlla Art2.1.5 solo se elemento presente
@@ -803,7 +817,7 @@ def _check_other(root):
                     se=_find(a215,"globe:Status",ns)
                     if _t(se).upper()!="TRUE":
                         bad.append(f"POPE-IPE=GIR901 Exception.Art2.1.5/Status={_t(se)!r}{_src(se) if se else _src(a215)}")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     out += _check_summary(summary_els, jur_sections, filing_info, ns)
@@ -839,7 +853,7 @@ def _check_summary(summary_els, jur_sections, filing_info, ns):
                 jcnt[jn]+=1
                 for sg in _findall(jel,"globe:Subgroup",ns): jsg[jn].append(sg)
     bad=[f"{jn}: {len(sgs)} Subgroup ma {jcnt[jn]} Summary" for jn,sgs in jsg.items() if len(sgs)>1 and jcnt[jn]!=len(sgs)]
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     # 70037
@@ -858,7 +872,7 @@ def _check_summary(summary_els, jur_sections, filing_info, ns):
                 for te in _findall(sg,"globe:TIN",ns):
                     tv=_t(te)
                     if tv and tv not in jst.get(jn,set()): bad.append(f"{jn} Summary Subgroup TIN={tv!r} non in JurSection{_src(te)}")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     # 70038
@@ -868,7 +882,7 @@ def _check_summary(summary_els, jur_sections, filing_info, ns):
         for s in summary_els:
             for sh in _findall(s,"globe:SafeHarbour",ns):
                 if _t(sh) in ("GIR1203","GIR1204","GIR1205"): bad.append(f"SafeHarbour={_t(sh)} dopo 30/06/2028{_src(sh)}")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     # 70039
@@ -878,7 +892,7 @@ def _check_summary(summary_els, jur_sections, filing_info, ns):
         for s in summary_els:
             for sh in _findall(s,"globe:SafeHarbour",ns):
                 if _t(sh)=="GIR1206": bad.append(f"SafeHarbour=GIR1206 dopo 31/12/2026{_src(sh)}")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     out.append(CheckResult("70040","SafeHarbour=GIR1206 solo nella giurisdizione UPE.","/GLOBE_OECD/GLOBEBody/Summary/SafeHarbour"))
@@ -893,7 +907,7 @@ def _check_summary(summary_els, jur_sections, filing_info, ns):
             for s in summary_els:
                 for sh in _findall(s,"globe:SafeHarbour",ns):
                     if _t(sh) in ("GIR1207","GIR1208","GIR1209"): bad.append(f"CFSofUPE={cfs} ma SafeHarbour={_t(sh)}{_src(sh)}")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     # 70042
@@ -906,7 +920,7 @@ def _check_summary(summary_els, jur_sections, filing_info, ns):
         if shv<={""} or shv<={"GIR1206"}:
             for req in ["globe:ETRRange","globe:SBIE","globe:QDMTTut","globe:GLoBETut"]:
                 if _find(s,req,ns) is None: bad.append(f"Manca {req.split(':')[-1]} in Summary{_src(jwtr)}")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     # 70043
@@ -918,7 +932,7 @@ def _check_summary(summary_els, jur_sections, filing_info, ns):
         if "GIR1202" in {_t(sh) for sh in _findall(s,"globe:SafeHarbour",ns)}:
             for req in ["globe:ETRRange","globe:SBIE","globe:QDMTTut"]:
                 if _find(s,req,ns) is None: bad.append(f"GIR1202 ma manca {req.split(':')[-1]}{_src(jwtr)}")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     return out
@@ -938,7 +952,7 @@ def _check_jur_etr(summary_els, jur_sections, ns):
             es=_find(etr,"globe:ETRStatus",ns)
             if es and _find(es,"globe:ETRException",ns) is None and _find(es,"globe:ETRComputation",ns) is None:
                 bad.append(f"{jn}: ETRStatus senza ETRException né ETRComputation{_src(es)}")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     # Mappa SafeHarbour per (giurisdizione, SubGroup TIN)
@@ -984,7 +998,7 @@ def _check_jur_etr(summary_els, jur_sections, ns):
             exc=_find(es,"globe:ETRException",ns)
             if exc is None or _find(exc,"globe:TransitionalCbCRSafeHarbour",ns) is None:
                 bad.append(f"{jn}: GIR1203/4/5 ma TransitionalCbCRSafeHarbour assente{_src(es)}")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     # 70046
@@ -1002,7 +1016,7 @@ def _check_jur_etr(summary_els, jur_sections, ns):
                 sg_types={_t(_find(sg,"globe:TypeofSubGroup",ns)) for sg in _findall(etr,"globe:SubGroup",ns)}
                 if not sg_types&{"GIR1607","GIR1608"}:
                     bad.append(f"{jn}: TransitionalCbCRSH presente ma SubGroup TypeofSubGroup≠GIR1607/1608{_src(tcsh)}")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     # 70047 FIX: controlla Revenue solo per l'ETR il cui SubGroup TIN è associato a GIR1203
@@ -1023,7 +1037,7 @@ def _check_jur_etr(summary_els, jur_sections, ns):
             tcsh=_find(exc,"globe:TransitionalCbCRSafeHarbour",ns)
             if tcsh is not None and not _t(_find(tcsh,"globe:Revenue",ns)):
                 bad.append(f"{jn}: GIR1203 ma Revenue assente{_src(tcsh)}")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     # 70048 FIX: controlla IncomeTax solo per l'ETR il cui SubGroup TIN è associato a GIR1204
@@ -1044,7 +1058,7 @@ def _check_jur_etr(summary_els, jur_sections, ns):
             tcsh=_find(exc,"globe:TransitionalCbCRSafeHarbour",ns)
             if tcsh is not None and not _t(_find(tcsh,"globe:IncomeTax",ns)):
                 bad.append(f"{jn}: GIR1204 ma IncomeTax assente{_src(tcsh)}")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     return out
@@ -1076,7 +1090,7 @@ def _check_utpr_sh(summary_els, jur_sections, ns):
             exc=_find(es,"globe:ETRException",ns) if es else None
             ush=_find(exc,"globe:UTPRSafeHarbour",ns) if exc else None
             if ush is None or not _t(_find(ush,"globe:CITRate",ns)): bad.append(f"{jn}: GIR1206 ma UTPRSafeHarbour/CITRate assente")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     # 70050
@@ -1089,7 +1103,7 @@ def _check_utpr_sh(summary_els, jur_sections, ns):
             es=_find(etr,"globe:ETRStatus",ns)
             ec=_find(es,"globe:ETRComputation",ns) if es else None
             if ec is None or _find(ec,"globe:Non-MaterialCE",ns) is None: bad.append(f"{jn}: GIR1207/8/9 ma Non-MaterialCE assente")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     # 70051
@@ -1103,7 +1117,7 @@ def _check_utpr_sh(summary_els, jur_sections, ns):
             nm=_find(ec,"globe:Non-MaterialCE",ns) if ec else None
             rfy=_find(nm,"globe:RFY",ns) if nm else None
             if rfy is None or _find(rfy,"globe:AggregateSimplified",ns) is None: bad.append(f"{jn}: GIR1208 ma AggregateSimplified assente")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     # 70052
@@ -1114,7 +1128,7 @@ def _check_utpr_sh(summary_els, jur_sections, ns):
         if "GIR1209" not in sh_jur.get(jn,set()): continue
         for oc in _findall(js,".//globe:ETRComputation/globe:OverallComputation",ns):
             if _find(oc,"globe:SubstanceExclusion",ns) is None: bad.append(f"{jn}: GIR1209 ma SubstanceExclusion assente")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     # 70053
@@ -1130,7 +1144,7 @@ def _check_utpr_sh(summary_els, jur_sections, ns):
             if profit is not None and profit<=0: continue
             for oc in _findall(etr,".//globe:ETRComputation/globe:OverallComputation",ns):
                 if _find(oc,"globe:SubstanceExclusion",ns) is None: bad.append(f"{jn}: GIR1205 ma SubstanceExclusion assente (Profit>0)")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     return out
@@ -1151,7 +1165,7 @@ def _check_elections(jur_sections, ns):
                 rv=_find(ch,"globe:RevocationYear",ns)
                 if rv is not None and _t(_find(ch,"globe:Status",ns)).upper()!="FALSE":
                     bad.append(f"{jn}: RevocationYear con Status≠FALSE{_src(rv)}")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     # 70055
@@ -1166,7 +1180,7 @@ def _check_elections(jur_sections, ns):
             add=_decimal(_t(_find(art,"globe:Additions",ns))) or Decimal(0); red=_decimal(_t(_find(art,"globe:Reductions",ns))) or Decimal(0)
             if ob is None or qo is None: continue
             if abs(qo+add-red-ob)>Decimal("1"): bad.append(f"{jn}: OutstandingBalance={ob} ≠ {qo+add-red}{_src(_find(art,'globe:OutstandingBalance',ns))}")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     # 70056
@@ -1180,7 +1194,7 @@ def _check_elections(jur_sections, ns):
             for ch in els:
                 rv=_find(ch,"globe:RevocationYear",ns)
                 if rv and _t(_find(ch,"globe:Status",ns)).upper()!="FALSE": bad.append(f"{jn}: CEComputation RevocationYear con Status≠FALSE{_src(rv)}")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     # 70057
@@ -1193,7 +1207,7 @@ def _check_elections(jur_sections, ns):
             if agg is None: continue
             cte=_find(ce,"globe:TIN",ns); ct=_t(cte); cot=_t(_find(agg,"globe:TaxConsolGroupTIN",ns))
             if ct and cot and ct!=cot: bad.append(f"{jn}: CEComputation/TIN={ct!r} ≠ TaxConsolGroupTIN={cot!r}{_src(cte)}")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     # 70058
@@ -1206,7 +1220,7 @@ def _check_elections(jur_sections, ns):
             if a76 is None: continue
             ite=_find(a76,"globe:InvestmentEntityTIN",ns); it=_t(ite); ct=_t(_find(ce,"globe:TIN",ns))
             if it and ct and it==ct: bad.append(f"{jn}: InvestmentEntityTIN = CEComputation/TIN = {ct!r}{_src(ite)}")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     return out
@@ -1224,7 +1238,7 @@ def _check_overall_comp(jur_sections, ns):
             items=[_t(x) for x in _findall(oc,"globe:NetGlobeIncome/globe:Adjustments/globe:AdjustmentItem",ns)]
             dups={x for x in items if items.count(x)>1}
             if dups: bad.append(f"{jn}: NéGI AdjustmentItem duplicati: {dups}")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     # 70060
@@ -1235,7 +1249,7 @@ def _check_overall_comp(jur_sections, ns):
         for oc in _findall(js,".//globe:ETRComputation/globe:OverallComputation",ns):
             if "GIR2025" in [_t(x) for x in _findall(oc,"globe:NetGlobeIncome/globe:Adjustments/globe:AdjustmentItem",ns)]:
                 if _find(oc,"globe:NetGlobeIncome/globe:IntShippingIncome",ns) is None: bad.append(f"{jn}: GIR2025 ma IntShippingIncome assente")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     # 70061
@@ -1250,7 +1264,7 @@ def _check_overall_comp(jur_sections, ns):
                 ia={_t(_find(adj,"globe:AdjustmentItem",ns)):_decimal(_t(_find(adj,"globe:Amount",ns))) for adj in _findall(oc,"globe:AdjustedCoveredTax/globe:Adjustments",ns)}
                 a2711=ia.get("GIR2711")
                 if a2711 is None or a2711>=0: bad.append(f"{jn}: Art4.6.1=TRUE ma GIR2711 amount={a2711}{_src(a461)}")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     # 70062
@@ -1262,7 +1276,7 @@ def _check_overall_comp(jur_sections, ns):
             if "GIR2720" in [_t(x) for x in _findall(oc,"globe:AdjustedCoveredTax/globe:Adjustments/globe:AdjustmentItem",ns)]:
                 te=_find(oc,"globe:AdjustedCoveredTax/globe:Total",ns); tot=_decimal(_t(te))
                 if tot is not None and tot<0: bad.append(f"{jn}: GIR2720 ma ACT/Total={tot}<0{_src(te)}")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     # 70063
@@ -1274,7 +1288,7 @@ def _check_overall_comp(jur_sections, ns):
             items=[_t(x) for x in _findall(oc,"globe:AdjustedCoveredTax/globe:Adjustments/globe:AdjustmentItem",ns)]
             dups={x for x in items if items.count(x)>1}
             if dups: bad.append(f"{jn}: ACT AdjustmentItem duplicati: {dups}")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     return out
@@ -1301,7 +1315,7 @@ def _check_postfiling(jur_sections, period_start, ns):
             te=_find(dta,"globe:Total",ns); tot=_decimal(_t(te))
             sm=sum((_decimal(_t(_find(aa,"globe:Amount",ns))) or Decimal(0)) for aa in _findall(dta,"globe:AmountAttributed",ns))
             if tot is not None and abs(tot-sm)>Decimal("1"): bad.append(f"{jn}: DeferTaxAsset Total={tot} ≠ {sm}{_src(te)}")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     # 70065
@@ -1315,7 +1329,7 @@ def _check_postfiling(jur_sections, period_start, ns):
             te=_find(ctr,"globe:Total",ns); tot=_decimal(_t(te))
             sm=sum((_decimal(_t(_find(aa,"globe:Amount",ns))) or Decimal(0)) for aa in _findall(ctr,"globe:AmountAttributed",ns))
             if tot is not None and abs(tot-sm)>Decimal("1"): bad.append(f"{jn}: CoveredTaxRefund Total={tot} ≠ {sm}{_src(te)}")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     # 70066
@@ -1329,7 +1343,7 @@ def _check_postfiling(jur_sections, period_start, ns):
             for aa in _findall(dta,"globe:AmountAttributed",ns):
                 ye=_find(aa,"globe:Year",ns); yr=_year(ye)
                 if sy and yr and yr>sy: bad.append(f"{jn}: DeferTaxAsset Year={yr} > {sy}{_src(ye)}")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     # 70067
@@ -1343,7 +1357,7 @@ def _check_postfiling(jur_sections, period_start, ns):
             yrs=[_year(_find(aa,"globe:Year",ns)) for aa in _findall(dta,"globe:AmountAttributed",ns)]
             yrs=[y for y in yrs if y is not None]
             if len(yrs)!=len(set(yrs)): bad.append(f"{jn}: DeferTaxAsset anni ripetuti: {yrs}")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     return out
@@ -1365,7 +1379,7 @@ def _check_covtax(jur_sections, period_end, ns):
             for aa in _findall(ctr,"globe:AmountAttributed",ns):
                 ye=_find(aa,"globe:Year",ns); yr=_year(ye)
                 if ey and yr and yr>ey: bad.append(f"{jn}: CoveredTaxRefund Year={yr} > {ey}{_src(ye)}")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     # 70069
@@ -1381,7 +1395,7 @@ def _check_covtax(jur_sections, period_end, ns):
             yrs=[_year(_find(aa,"globe:Year",ns)) for aa in _findall(ctr,"globe:AmountAttributed",ns)]
             yrs=[y for y in yrs if y is not None]
             if len(yrs)!=len(set(yrs)): bad.append(f"{jn}: CoveredTaxRefund anni ripetuti: {yrs}")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     def _ddt_recs(oc):
@@ -1398,7 +1412,7 @@ def _check_covtax(jur_sections, period_end, ns):
             for rec in _ddt_recs(oc):
                 ye=_find(rec,"globe:Year",ns); yr=_year(ye)
                 if ey and yr and yr>ey: bad.append(f"{jn}: DeemedDistTax Year={yr} > {ey}{_src(ye)}")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     # 70071
@@ -1410,7 +1424,7 @@ def _check_covtax(jur_sections, period_end, ns):
             for rec in _ddt_recs(oc):
                 ye=_find(rec,"globe:Year",ns); yr=_year(ye)
                 if ey and yr and (ey-yr)>=4: bad.append(f"{jn}: DeemedDistTax Year={yr} è ≥4 anni prima di {ey}{_src(ye)}")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     # 70072
@@ -1424,7 +1438,7 @@ def _check_covtax(jur_sections, period_end, ns):
                 e=_decimal(_t(ee)); s=_decimal(_t(se)); t=_decimal(_t(te))
                 if e is None or s is None or t is None: continue
                 if abs(e-(s-t))>Decimal("1"): bad.append(f"{jn}: EndAmount={e} ≠ {s}-{t}={s-t}{_src(ee)}")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     # 70073
@@ -1436,7 +1450,7 @@ def _check_covtax(jur_sections, period_end, ns):
             for rec in _ddt_recs(oc):
                 ee=_find(rec,"globe:EndAmount",ns); e=_decimal(_t(ee))
                 if e is not None and e<0: bad.append(f"{jn}: EndAmount={e}<0{_src(ee)}")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     # 70074
@@ -1450,7 +1464,7 @@ def _check_covtax(jur_sections, period_end, ns):
                 if tot is None: continue
                 sm=sum((_decimal(_t(_find(rec,f"globe:DDTYear-{i}",ns))) or Decimal(0)) for i in range(4))
                 if abs(tot-sm)>Decimal("1"): bad.append(f"{jn}: TotalDDT={tot} ≠ {sm}{_src(te)}")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     # 70075
@@ -1465,7 +1479,7 @@ def _check_covtax(jur_sections, period_end, ns):
                     for i in range(4):
                         el=_find(rec,f"globe:DDTYear-{i}",ns); v=_decimal(_t(el))
                         if v is not None and v!=0: bad.append(f"{jn}: Year={yr}=PeriodEnd ma DDTYear-{i}={v}≠0{_src(el)}")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     return out
@@ -1486,7 +1500,7 @@ def _check_defer_tax(jur_sections, ns):
             te=_find(tbc,"globe:Total",ns); tot=_decimal(_t(te))
             sm=sum((_decimal(_t(x)) or Decimal(0)) for x in _findall(tbc,".//globe:CFCJur/globe:Allocation/globe:AggAllocTax",ns))
             if tot is not None and abs(tot-sm)>Decimal("1"): bad.append(f"{jn}: TransBlendCFC Total={tot} ≠ {sm}{_src(te)}")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     # 70077
@@ -1503,7 +1517,7 @@ def _check_defer_tax(jur_sections, ns):
             hi=_decimal(_t(_find(dta,"globe:Recast/globe:Higher",ns))) or Decimal(0)
             if tot is None: continue
             if abs(tot-(pre+lo-hi))>Decimal("1"): bad.append(f"{jn}: DeferTaxAdjustAmt Total={tot} ≠ {pre+lo-hi}{_src(te)}")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     # 70078
@@ -1518,7 +1532,7 @@ def _check_defer_tax(jur_sections, ns):
             dta2=_decimal(_t(_find(dta,"globe:DefTaxAmt",ns))); diff=_decimal(_t(_find(dta,"globe:DiffCarryValue",ns))); gbe=_decimal(_t(_find(dta,"globe:GLoBEValue",ns)))
             if bef is None or dta2 is None or diff is None or gbe is None: continue
             if abs(bef-(dta2-diff+gbe))>Decimal("1"): bad.append(f"{jn}: BefRecastAdjust={bef} ≠ {dta2-diff+gbe}{_src(be)}")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     # 70079
@@ -1533,7 +1547,7 @@ def _check_defer_tax(jur_sections, ns):
             bef=_decimal(_t(_find(dta,"globe:BefRecastAdjust",ns))); tadj=_decimal(_t(_find(dta,"globe:TotalAdjust",ns)))
             if pre is None or bef is None or tadj is None: continue
             if abs(pre-(bef+tadj))>Decimal("1"): bad.append(f"{jn}: PreRecast={pre} ≠ {bef}+{tadj}={bef+tadj}{_src(pe)}")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     # 70080
@@ -1547,7 +1561,7 @@ def _check_defer_tax(jur_sections, ns):
             items=[_t(x) for x in _findall(dta,"globe:Adjustments/globe:AdjustmentItem",ns)]
             dups={x for x in items if items.count(x)>1}
             if dups: bad.append(f"{jn}: DeferTaxAdjustAmt Adjustments duplicati: {dups}")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     # 70081
@@ -1565,7 +1579,7 @@ def _check_defer_tax(jur_sections, ns):
             if tot is None or ex is None: continue
             ok1=st is not None and abs(tot-(st-ex))<=Decimal("1"); ok2=rc is not None and abs(tot-(rc-ex))<=Decimal("1")
             if not ok1 and not ok2: bad.append(f"{jn}: DeferredTaxAssets/Total={tot} non coincide con nessuno dei calcoli{_src(te)}")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     # 70082
@@ -1581,7 +1595,7 @@ def _check_defer_tax(jur_sections, ns):
             se=_find(tr,"globe:DeferredTaxAssetStart",ns); re_=_find(tr,"globe:DeferredTaxAssetRecast",ns)
             s=_decimal(_t(se)); r_=_decimal(_t(re_))
             if s is not None and r_ is not None and s!=0 and r_!=0: bad.append(f"{jn}: DeferredTaxAssetStart={s} e Recast={r_} entrambi ≠ 0{_src(se)}")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     return out
@@ -1602,7 +1616,7 @@ def _check_excess(jur_sections, ns):
             py=_decimal(_t(_find(en,"globe:PriorYearBalance",ns))); ge=_decimal(_t(_find(en,"globe:GeneratedInRFY",ns))); ut=_decimal(_t(_find(en,"globe:UtilizedInRFY",ns)))
             if rem is None or py is None or ge is None or ut is None: continue
             if abs(rem-(py+ge-ut))>Decimal("1"): bad.append(f"{jn}: ExcessNegTaxExpense Remaining={rem} ≠ {py+ge-ut}{_src(re)}")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     # 70084
@@ -1616,7 +1630,7 @@ def _check_excess(jur_sections, ns):
                 if _t(_find(adj,"globe:AdjustmentItem",ns))=="GIR2719":
                     ae=_find(adj,"globe:Amount",ns); amt=_decimal(_t(ae))
                     if ge is not None and amt is not None and abs(amt-ge)>Decimal("1"): bad.append(f"{jn}: GIR2719 Amount={amt} ≠ GeneratedInRFY={ge}{_src(ae)}")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     # 70085
@@ -1630,7 +1644,7 @@ def _check_excess(jur_sections, ns):
                 if _t(_find(adj,"globe:AdjustmentItem",ns))=="GIR2720":
                     ae=_find(adj,"globe:Amount",ns); amt=_decimal(_t(ae))
                     if ut is not None and amt is not None and abs(amt-ut)>Decimal("1"): bad.append(f"{jn}: GIR2720 Amount={amt} ≠ UtilizedInRFY={ut}{_src(ae)}")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     # 70086
@@ -1644,7 +1658,7 @@ def _check_excess(jur_sections, ns):
             if ep is None or ngi is None: continue
             exp=max(Decimal(0), ngi-se)
             if abs(ep-exp)>Decimal("1"): bad.append(f"{jn}: ExcessProfits={ep} ≠ max(0,{ngi}-{se})={exp}{_src(ee)}")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     # 70087
@@ -1661,7 +1675,7 @@ def _check_excess(jur_sections, ns):
             if tot is None: continue
             exp=pc*pm+tv*tm
             if abs(tot-exp)>Decimal("1"): bad.append(f"{jn}: SubstanceExclusion Total={tot} ≠ {exp:.2f}{_src(te)}")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     return out
@@ -1681,7 +1695,7 @@ def _check_atut(jur_sections, period_end, ns):
         for oc in _findall(js,".//globe:ETRComputation/globe:OverallComputation",ns):
             ne=_find(oc,"globe:NetGlobeIncome/globe:Total",ns); ngi=_decimal(_t(ne))
             if ngi is not None and ngi<0 and _art415(oc) is None: bad.append(f"{jn}: NéGI={ngi}<0 ma Art4.1.5 assente{_src(ne)}")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     # 70089
@@ -1694,7 +1708,7 @@ def _check_atut(jur_sections, period_end, ns):
             if art is None: continue
             ae=_find(art,"globe:AdjustedCoveredTax",ns); a=_decimal(_t(ae))
             if a is not None and a>=0: bad.append(f"{jn}: Art4.1.5/AdjustedCoveredTax={a} non negativo{_src(ae)}")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     # 70090
@@ -1707,7 +1721,7 @@ def _check_atut(jur_sections, period_end, ns):
             if art is None: continue
             le=_find(art,"globe:GlobeLoss",ns); loss=_decimal(_t(le)); ngi=_decimal(_t(_find(oc,"globe:NetGlobeIncome/globe:Total",ns)))
             if loss is not None and ngi is not None and abs(loss-ngi)>Decimal("1"): bad.append(f"{jn}: GlobeLoss={loss} ≠ NéGI={ngi}{_src(le)}")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     # 70091
@@ -1721,7 +1735,7 @@ def _check_atut(jur_sections, period_end, ns):
             ee=_find(art,"globe:ExpectedAdjustedCoveredTax",ns); exp=_decimal(_t(ee)); loss=_decimal(_t(_find(art,"globe:GlobeLoss",ns)))
             if exp is None or loss is None: continue
             if abs(exp-loss*Decimal("0.15"))>Decimal("1"): bad.append(f"{jn}: ExpectedACT={exp} ≠ {loss}*15%={loss*Decimal('0.15'):.2f}{_src(ee)}")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     # 70092
@@ -1737,7 +1751,7 @@ def _check_atut(jur_sections, period_end, ns):
             if atut is None or exp is None or act is None: continue
             expected=max(Decimal(0),exp-act)
             if abs(atut-expected)>Decimal("1"): bad.append(f"{jn}: Art4.1.5/ATUT={atut} ≠ max(0,{exp}-{act})={expected}{_src(ae)}")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     # 70093
@@ -1749,7 +1763,7 @@ def _check_atut(jur_sections, period_end, ns):
             for non in _findall(oc,"globe:AdditionalTopUpTax/globe:NONArt4.1.5",ns):
                 ye=_find(non,"globe:Year",ns); yr=_year(ye)
                 if ey and yr and yr>ey: bad.append(f"{jn}: NONArt4.1.5 Year={yr} > {ey}{_src(ye)}")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     # 70094
@@ -1762,7 +1776,7 @@ def _check_atut(jur_sections, period_end, ns):
                 if "GIR2605" not in set((_t(_find(non,"globe:Articles",ns)) or "").split()): continue
                 ye=_find(non,"globe:Year",ns); yr=_year(ye)
                 if ey and yr and (ey-yr)<4: bad.append(f"{jn}: GIR2605 Year={yr} non è ≥4 anni prima di {ey}{_src(ye)}")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     # 70095
@@ -1775,7 +1789,7 @@ def _check_atut(jur_sections, period_end, ns):
                 if "GIR2602" not in set((_t(_find(non,"globe:Articles",ns)) or "").split()): continue
                 ye=_find(non,"globe:Year",ns); yr=_year(ye)
                 if ey and yr and (ey-yr)!=5: bad.append(f"{jn}: GIR2602 Year={yr} non è il quinto anno prima di {ey}{_src(ye)}")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     # 70096
@@ -1789,7 +1803,7 @@ def _check_atut(jur_sections, period_end, ns):
                 rec=_decimal(_t(_find(non,"globe:Recalculated/globe:TopUpTax",ns))); prev=_decimal(_t(_find(non,"globe:Previous/globe:TopUpTax",ns)))
                 if atut is None or rec is None or prev is None: continue
                 if abs(atut-(rec-prev))>Decimal("1"): bad.append(f"{jn}: NONArt4.1.5 ATUT={atut} ≠ {rec}-{prev}={rec-prev}{_src(ae)}")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     return out
@@ -1813,7 +1827,7 @@ def _check_iir_utpr(jur_sections, utpr_attr, ns):
                     if ir is None: continue
                     exp=(ngi-ooa)/ngi
                     if abs(ir-exp)>Decimal("0.0001"): bad.append(f"{jn}: InclusionRatio={ir} ≠ ({ngi}-{ooa})/{ngi}={exp:.6f}{_src(ire)}")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     # 70098
@@ -1828,7 +1842,7 @@ def _check_iir_utpr(jur_sections, utpr_attr, ns):
                     se=_find(pe,"globe:TopUpTaxShare",ns); sh=_decimal(_t(se)); ir=_decimal(_t(_find(pe,"globe:InclusionRatio",ns)))
                     if sh is None or tut is None or ir is None: continue
                     if abs(sh-tut*ir)>Decimal("1"): bad.append(f"{jn}: TopUpTaxShare={sh} ≠ {tut}*{ir}={tut*ir:.2f}{_src(se)}")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     # 70099
@@ -1846,7 +1860,7 @@ def _check_iir_utpr(jur_sections, utpr_attr, ns):
         for uc in _findall(js,".//globe:LowTaxJurisdiction/globe:UTPR/globe:UTPRCalculation",ns):
             te=_find(uc,"globe:TotalUTPRTopUpTax",ns); tot=_decimal(_t(te))
             if tot is not None and tot>0 and utpr_attr is None: bad.append(f"TotalUTPRTopUpTax={tot}>0 ma UTPRAttribution assente{_src(te)}")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     # 70101-70105
@@ -1865,7 +1879,7 @@ def _check_iir_utpr(jur_sections, utpr_attr, ns):
         if utpr_attr:
             for attr in _findall(utpr_attr,"globe:Attribution",ns):
                 if check_fn(attr,ns): bad.append(f"Attribution violazione {code}{_src(attr)}")
-        if bad: r.ko(bad[0])
+        _ko_all(r, bad)
         out.append(r)
 
     # 70105
@@ -1879,7 +1893,7 @@ def _check_iir_utpr(jur_sections, utpr_attr, ns):
             ca=_decimal(_t(_find(attr,"globe:AddCashTaxExpense",ns))) or Decimal(0)
             if car is None: continue
             if abs(car-(fw+at-ca))>Decimal("1"): bad.append(f"CarriedForward={car} ≠ {fw}+{at}-{ca}={fw+at-ca}{_src(ce)}")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     return out
@@ -1899,7 +1913,7 @@ def _check_ce_fanil(jur_sections, ns):
             for adj in _findall(ce,".//globe:AdjustedFANIL/globe:Adjustment/globe:CrossBorderAdjustments",ns):
                 oe=_find(adj,"globe:OtherTIN",ns); ov=_t(oe)
                 if ct and ov and ct==ov: bad.append(f"{jn}: CrossBorderAdjustments/OtherTIN={ov!r} = CEComputation/TIN{_src(oe)}")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     # 70107
@@ -1913,7 +1927,7 @@ def _check_ce_fanil(jur_sections, ns):
                 if ee is not None and _t(ee).upper()=="TRUE":
                     cba=_find(adj,"globe:CrossBorderAdjustments",ns)
                     if cba: bad.append(f"{jn}: Exception=TRUE ma CrossBorderAdjustments presente{_src(cba)}")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     # 70108-70113
@@ -1941,7 +1955,7 @@ def _check_ce_fanil(jur_sections, ns):
                     if bv not in bases: continue
                     ioo=_find(ua,"globe:IdentificationOfOwners",ns)
                     if check_fn(ioo,ns): bad.append(f"{jn}: Basis={bv} verifica fallita{_src(be)}")
-        if bad: r.ko(bad[0])
+        _ko_all(r, bad)
         out.append(r)
 
     # 70112
@@ -1955,7 +1969,7 @@ def _check_ce_fanil(jur_sections, ns):
                 ioo=_find(ua,"globe:IdentificationOfOwners",ns)
                 ee=_find(ioo,"globe:EntityOwner/globe:ExTypeOfEntity",ns) if ioo else None
                 if ee is not None and _t(ee)=="GIR2805": bad.append(f"{jn}: Basis=GIR1904 ma ExTypeOfEntity=GIR2805{_src(ee)}")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     # 70113
@@ -1969,7 +1983,7 @@ def _check_ce_fanil(jur_sections, ns):
                 ioo=_find(ua,"globe:IdentificationOfOwners",ns)
                 ee=_find(ioo,"globe:EntityOwner/globe:ExTypeOfEntity",ns) if ioo else None
                 if ee is not None and _t(ee)=="GIR2804": bad.append(f"{jn}: Basis=GIR1909 ma ExTypeOfEntity=GIR2804{_src(ee)}")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     return out
@@ -2000,7 +2014,7 @@ def _check_ce_ngi(jur_sections, ns):
                     a0,e0=pairs[0]; a1,e1=pairs[1]
                     if not (a0<0<a1) and not (a1<0<a0):
                         bad.append(f"{jn}: AdjustmentItem={code!r} ha due Amount [{a0},{a1}] senza segni opposti{_src(e0)}{_src(e1)}")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     # 70115
@@ -2012,7 +2026,7 @@ def _check_ce_ngi(jur_sections, ns):
             items={_t(x) for x in _findall(ce,"globe:NetGlobeIncome/globe:Adjustments/globe:AdjustmentItem",ns)}
             if items&{"GIR2022","GIR2023"} and _find(ce,".//globe:AdjustedFANIL/globe:Adjustment/globe:UPEAdjustments",ns) is None:
                 bad.append(f"{jn}: GIR2022/2023 ma UPEAdjustments assente")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     # 70116
@@ -2023,7 +2037,7 @@ def _check_ce_ngi(jur_sections, ns):
         for ce in _findall(js,".//globe:CEComputation",ns):
             if "GIR2025" in {_t(x) for x in _findall(ce,"globe:NetGlobeIncome/globe:Adjustments/globe:AdjustmentItem",ns)}:
                 if _find(ce,"globe:NetGlobeIncome/globe:IntShippingIncome",ns) is None: bad.append(f"{jn}: GIR2025 ma IntShippingIncome assente")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     # 70117
@@ -2034,7 +2048,7 @@ def _check_ce_ngi(jur_sections, ns):
         for ce in _findall(js,".//globe:CEComputation",ns):
             if "GIR2024" in {_t(x) for x in _findall(ce,"globe:NetGlobeIncome/globe:Adjustments/globe:AdjustmentItem",ns)}:
                 if _find(ce,"globe:Elections/globe:Art7.6",ns) is None: bad.append(f"{jn}: GIR2024 ma Elections/Art7.6 assente")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     # 70118 FIX: stesso meccanismo di 70114 per AdjustedCoveredTax/Adjustments
@@ -2048,7 +2062,7 @@ def _check_ce_ngi(jur_sections, ns):
                     a0,e0=pairs[0]; a1,e1=pairs[1]
                     if not (a0<0<a1) and not (a1<0<a0):
                         bad.append(f"{jn}: ACT AdjustmentItem={code!r} ha due Amount [{a0},{a1}] senza segni opposti{_src(e0)}{_src(e1)}")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     # 70119 FIX: scope = singolo CEComputation, non ETR aggregato
@@ -2060,7 +2074,7 @@ def _check_ce_ngi(jur_sections, ns):
             items=[_t(x) for x in _findall(ce,"globe:AdjustedCoveredTax/globe:Adjustments/globe:AdjustmentItem",ns)]
             dups={x for x in items if items.count(x)>1}
             if dups: bad.append(f"{jn}: CEComputation ACT AdjustmentItem duplicati: {dups}")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     # 70120
@@ -2078,7 +2092,7 @@ def _check_ce_ngi(jur_sections, ns):
             as_=sum((_decimal(_t(_find(adj,"globe:Amount",ns))) or Decimal(0)) for adj in _findall(dta,"globe:Adjustment",ns))
             if tot is None: continue
             if abs(tot-(dte+as_+hi+lo))>Decimal("1"): bad.append(f"{jn}: CEComputation DTA Total={tot} ≠ {dte+as_+hi+lo:.2f}{_src(te)}")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     # 70121: scope = ETRComputation (tutti i CEComputation aggregati), come l'AdE.
@@ -2107,7 +2121,7 @@ def _check_ce_ngi(jur_sections, ns):
                 # Trova la prima occorrenza duplicata per il messaggio
                 first_dup_el=next((el for code,el in all_items if code in dups), None)
                 bad.append(f"{jn}: DeferTaxAdjustAmt/Adjustment AdjustmentItem duplicati tra CEComputation: {dups}{_src(first_dup_el)}")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     # 70122
@@ -2123,7 +2137,7 @@ def _check_ce_ngi(jur_sections, ns):
             if len(amts)==2:
                 if not (amts[0]<0<amts[1]) and not (amts[1]<0<amts[0]):
                     bad.append(f"{jn}: DTA Amounts {amts} non opposti")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     # 70123
@@ -2136,7 +2150,7 @@ def _check_ce_ngi(jur_sections, ns):
             if ae:
                 v=_decimal(_t(ae))
                 if v is not None and v<0: bad.append(f"{jn}: CrossAllocation/Additions={v}<0{_src(ae)}")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     # 70124
@@ -2149,7 +2163,7 @@ def _check_ce_ngi(jur_sections, ns):
             if re:
                 v=_decimal(_t(re))
                 if v is not None and v>0: bad.append(f"{jn}: CrossAllocation/Reductions={v}>0{_src(re)}")
-    if bad: r.ko(bad[0])
+    _ko_all(r, bad)
     out.append(r)
 
     return out
@@ -2211,9 +2225,16 @@ def _write_xlsx(results, xml_path, output_dir, guid_resolved=False, version_fixe
         elif k.startswith("⚠"): c.fill=_FILL_SKIP; ws1.cell(row=i,column=1).fill=_FILL_SKIP
     ws1.column_dimensions["A"].width=22; ws1.column_dimensions["B"].width=80
 
+    # Altezza riga dinamica in base al numero di righe nel detail
+    def _row_height(detail: str) -> int:
+        if not detail:
+            return 20
+        n = detail.count("\n") + 1
+        return max(20, min(n * 16, 400))   # 16pt per riga, cap a 400pt
+
     # Dettaglio
     ws2=wb.create_sheet("Dettaglio"); ws2.sheet_view.showGridLines=False
-    hdrs=["Codice","Categoria","Descrizione","XPath","Esito","Dettaglio"]; wds=[10,12,55,50,8,70]
+    hdrs=["Codice","Categoria","Descrizione","XPath","Esito","Dettaglio"]; wds=[10,12,55,50,8,90]
     for col,(h,w) in enumerate(zip(hdrs,wds),start=1):
         _hdr(ws2,1,col,h); ws2.column_dimensions[get_column_letter(col)].width=w
     for row,r in enumerate(results,start=2):
@@ -2221,7 +2242,7 @@ def _write_xlsx(results, xml_path, output_dir, guid_resolved=False, version_fixe
         f=_ffill(r.status)
         _cell(ws2,row,1,r.code,f); _cell(ws2,row,2,cat,f); _cell(ws2,row,3,r.desc,f)
         _cell(ws2,row,4,r.xpath,f); _cell(ws2,row,5,r.status,f,bold=True); _cell(ws2,row,6,r.detail,f)
-        ws2.row_dimensions[row].height=30
+        ws2.row_dimensions[row].height=_row_height(r.detail)
     ws2.freeze_panes="A2"; ws2.auto_filter.ref=f"A1:F{len(results)+1}"
 
     # Errori e Warning
@@ -2235,7 +2256,7 @@ def _write_xlsx(results, xml_path, output_dir, guid_resolved=False, version_fixe
             f=_ffill(r.status)
             _cell(ws3,er,1,r.code,f); _cell(ws3,er,2,cat,f); _cell(ws3,er,3,r.desc,f)
             _cell(ws3,er,4,r.xpath,f); _cell(ws3,er,5,r.status,f,bold=True); _cell(ws3,er,6,r.detail,f)
-            ws3.row_dimensions[er].height=30; er+=1
+            ws3.row_dimensions[er].height=_row_height(r.detail); er+=1
     if er==2: ws3.cell(row=2,column=1,value="Nessun errore rilevato ✅").font=Font(bold=True,color="375623")
     ws3.freeze_panes="A2"
 
