@@ -976,18 +976,55 @@ def _check_jur_etr(summary_els, jur_sections, ns):
                         sh_by_sg[(jn, t)] |= sh_vals
                     if not tins:
                         sh_by_jur[jn] |= sh_vals
+                # Fallback per giurisdizione: quando ETR/SubGroup/TIN='NOTIN'
+                # il matching avviene per giurisdizione, non per TIN specifico.
+                sh_by_jur[jn] |= sh_vals
             else:
                 sh_by_jur[jn] |= sh_vals
 
     cbcr_codes = {"GIR1203","GIR1204","GIR1205"}
 
     # 70045
+    # Il check scatta in due scenari:
+    # A) SafeHarbour=GIR1203/4/5 per la giurisdizione ma TransitionalCbCRSafeHarbour assente
+    # B) Summary/Subgroup ha TIN reale ma ETR/SubGroup ha NOTIN → mismatch strutturale
+    #    In questo caso l'AdE segnala 70045 per ogni Subgroup del Summary senza match ETR
     r=CheckResult("70045","Se SafeHarbour=GIR1203/1204/1205, deve essere compilato ETRException/TransitionalCbCRSafeHarbour.","/GLOBE_OECD/GLOBEBody/JurisdictionSection/.../ETRException/TransitionalCbCRSafeHarbour")
     bad=[]
+    # Mappa: (jn, sg_tin_summary) → set SafeHarbour, solo per TIN reali (non NOTIN)
+    sh_real_sg: dict = defaultdict(set)
+    for s in summary_els:
+        sh_vals_s = {_t(sh) for sh in _findall(s,"globe:SafeHarbour",ns)}
+        for jel in _findall(s,"globe:Jurisdiction",ns):
+            jn_s = _t(_find(jel,"globe:JurisdictionName",ns))
+            for sg in _findall(jel,"globe:Subgroup",ns):
+                for te in _findall(sg,"globe:TIN",ns):
+                    tv = _t(te)
+                    if tv and tv != "NOTIN":
+                        sh_real_sg[(jn_s, tv)] |= sh_vals_s
+    # ETR SubGroup TIN per giurisdizione
+    etr_sg_tins: dict = defaultdict(set)
+    for js in jur_sections:
+        jn_j = _t(_find(js,"globe:Jurisdiction",ns))
+        for etr in _findall(js,".//globe:GLoBETax/globe:ETR",ns):
+            for sg in _findall(etr,"globe:SubGroup",ns):
+                for te in _findall(sg,"globe:TIN",ns):
+                    etr_sg_tins[jn_j].add(_t(te))
+    # Scenario B: Subgroup del Summary con TIN reale non trovato negli ETR SubGroup
+    for s in summary_els:
+        sh_vals_s = {_t(sh) for sh in _findall(s,"globe:SafeHarbour",ns)}
+        if not (sh_vals_s & cbcr_codes): continue
+        for jel in _findall(s,"globe:Jurisdiction",ns):
+            jn_s = _t(_find(jel,"globe:JurisdictionName",ns))
+            for sg in _findall(jel,"globe:Subgroup",ns):
+                for te in _findall(sg,"globe:TIN",ns):
+                    tv = _t(te)
+                    if tv and tv != "NOTIN" and tv not in etr_sg_tins.get(jn_s, set()):
+                        bad.append(f"{jn_s}: Summary Subgroup TIN={tv!r} con GIR1203/4/5 ma nessun ETR/SubGroup corrispondente{_src(te)}")
+    # Scenario A: TransitionalCbCRSafeHarbour assente
     for js in jur_sections:
         jn=_t(_find(js,"globe:Jurisdiction",ns))
         for etr in _findall(js,".//globe:GLoBETax/globe:ETR",ns):
-            # Trova i SubGroup TIN di questo ETR per il lookup SafeHarbour
             sg_tins = [_t(te) for sg in _findall(etr,"globe:SubGroup",ns) for te in _findall(sg,"globe:TIN",ns)]
             etr_sh = set()
             for st in sg_tins: etr_sh |= sh_by_sg.get((jn,st), set())
@@ -1019,9 +1056,24 @@ def _check_jur_etr(summary_els, jur_sections, ns):
     _ko_all(r, bad)
     out.append(r)
 
-    # 70047 FIX: controlla Revenue solo per l'ETR il cui SubGroup TIN è associato a GIR1203
+    # 70047: GIR1203 → Revenue obbligatorio
+    # Scatta in due scenari:
+    # A) ETR ha GIR1203 via sh_by_sg/jur ma Revenue assente nel TCSH
+    # B) Summary/Subgroup con TIN reale e GIR1203 non ha ETR corrispondente (stessa logica 70045-B)
     r=CheckResult("70047","Se SafeHarbour=GIR1203, TransitionalCbCRSafeHarbour/Revenue deve essere compilato.","/GLOBE_OECD/GLOBEBody/JurisdictionSection/.../TransitionalCbCRSafeHarbour/Revenue")
     bad=[]
+    # Scenario B: Subgroup con GIR1203 senza ETR corrispondente
+    for s in summary_els:
+        sh_vals_s = {_t(sh) for sh in _findall(s,"globe:SafeHarbour",ns)}
+        if "GIR1203" not in sh_vals_s: continue
+        for jel in _findall(s,"globe:Jurisdiction",ns):
+            jn_s = _t(_find(jel,"globe:JurisdictionName",ns))
+            for sg in _findall(jel,"globe:Subgroup",ns):
+                for te in _findall(sg,"globe:TIN",ns):
+                    tv = _t(te)
+                    if tv and tv != "NOTIN" and tv not in etr_sg_tins.get(jn_s, set()):
+                        bad.append(f"{jn_s}: Summary Subgroup TIN={tv!r} con GIR1203 ma nessun ETR corrispondente; Revenue non verificabile{_src(te)}")
+    # Scenario A: Revenue assente nel TCSH dell'ETR
     for js in jur_sections:
         jn=_t(_find(js,"globe:Jurisdiction",ns))
         for etr in _findall(js,".//globe:GLoBETax/globe:ETR",ns):
@@ -1040,9 +1092,21 @@ def _check_jur_etr(summary_els, jur_sections, ns):
     _ko_all(r, bad)
     out.append(r)
 
-    # 70048 FIX: controlla IncomeTax solo per l'ETR il cui SubGroup TIN è associato a GIR1204
+    # 70048: GIR1204 → IncomeTax obbligatorio
     r=CheckResult("70048","Se SafeHarbour=GIR1204, TransitionalCbCRSafeHarbour/IncomeTax deve essere compilato.","/GLOBE_OECD/GLOBEBody/JurisdictionSection/.../TransitionalCbCRSafeHarbour/IncomeTax")
     bad=[]
+    # Scenario B: Subgroup con GIR1204 senza ETR corrispondente
+    for s in summary_els:
+        sh_vals_s = {_t(sh) for sh in _findall(s,"globe:SafeHarbour",ns)}
+        if "GIR1204" not in sh_vals_s: continue
+        for jel in _findall(s,"globe:Jurisdiction",ns):
+            jn_s = _t(_find(jel,"globe:JurisdictionName",ns))
+            for sg in _findall(jel,"globe:Subgroup",ns):
+                for te in _findall(sg,"globe:TIN",ns):
+                    tv = _t(te)
+                    if tv and tv != "NOTIN" and tv not in etr_sg_tins.get(jn_s, set()):
+                        bad.append(f"{jn_s}: Summary Subgroup TIN={tv!r} con GIR1204 ma nessun ETR corrispondente; IncomeTax non verificabile{_src(te)}")
+    # Scenario A: IncomeTax assente nel TCSH dell'ETR
     for js in jur_sections:
         jn=_t(_find(js,"globe:Jurisdiction",ns))
         for etr in _findall(js,".//globe:GLoBETax/globe:ETR",ns):
@@ -1068,6 +1132,8 @@ def _check_jur_etr(summary_els, jur_sections, ns):
 def _check_utpr_sh(summary_els, jur_sections, ns):
     from collections import defaultdict
     out=[]
+    # sh_jur aggrega SafeHarbour per giurisdizione indipendentemente dal SubGroup.
+    # Questo è corretto per 70049-70053 che operano a livello di giurisdizione.
     sh_jur=defaultdict(set)
     for s in summary_els:
         shv={_t(sh) for sh in _findall(s,"globe:SafeHarbour",ns)}
@@ -1131,9 +1197,30 @@ def _check_utpr_sh(summary_els, jur_sections, ns):
     _ko_all(r, bad)
     out.append(r)
 
-    # 70053
+    # 70053: GIR1205 → SubstanceExclusion obbligatorio (salvo Profit≤0)
+    # Scatta anche quando Summary/Subgroup ha TIN reale con GIR1205 ma l'ETR ha NOTIN
     r=CheckResult("70053","Se SafeHarbour=GIR1205, SubstanceExclusion obbligatorio (salvo Profit≤0).","/GLOBE_OECD/GLOBEBody/JurisdictionSection/.../OverallComputation/SubstanceExclusion")
     bad=[]
+    # Mappa ETR SubGroup TIN per giurisdizione (ricostruita localmente)
+    etr_sg_tins_53: dict = defaultdict(set)
+    for js in jur_sections:
+        jn_j = _t(_find(js,"globe:Jurisdiction",ns))
+        for etr in _findall(js,".//globe:GLoBETax/globe:ETR",ns):
+            for sg in _findall(etr,"globe:SubGroup",ns):
+                for te in _findall(sg,"globe:TIN",ns):
+                    etr_sg_tins_53[jn_j].add(_t(te))
+    # Scenario B: Subgroup con GIR1205 e TIN reale senza ETR corrispondente
+    for s in summary_els:
+        shv_s = {_t(sh) for sh in _findall(s,"globe:SafeHarbour",ns)}
+        if "GIR1205" not in shv_s: continue
+        for jel in _findall(s,"globe:Jurisdiction",ns):
+            jn_s = _t(_find(jel,"globe:JurisdictionName",ns))
+            for sg in _findall(jel,"globe:Subgroup",ns):
+                for te in _findall(sg,"globe:TIN",ns):
+                    tv = _t(te)
+                    if tv and tv != "NOTIN" and tv not in etr_sg_tins_53.get(jn_s, set()):
+                        bad.append(f"{jn_s}: Summary Subgroup TIN={tv!r} con GIR1205 ma nessun ETR corrispondente; SubstanceExclusion non verificabile{_src(te)}")
+    # Scenario A: SubstanceExclusion assente nell'ETR con GIR1205
     for js in jur_sections:
         jn=_t(_find(js,"globe:Jurisdiction",ns))
         if "GIR1205" not in sh_jur.get(jn,set()): continue
