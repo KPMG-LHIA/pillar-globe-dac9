@@ -4,6 +4,11 @@ Implementa tutti i check AdE verificabili offline dall'Allegato Tecnico (13 marz
   • Sezione 8.2  – Record Errors SEVERE  (60001-60028, esclusi 60002/60008/60009/60014)
   • Sezione 8.3  – Record Errors OTHER   (70001-70124)
 
+Changelog v1.3 (2026-06):
+  70004   – fix: esclude TypeOfTIN=GIR3002 dal check issuedBy==ResCountryCode
+  70016   – fix: elemento XML è GlobeStatus (non GloBEStatus); _findall per valori multipli
+  _gs()   – nuovo helper che sostituisce set((_t(_find(...GloBEStatus...)) or "").split())
+
 Changelog v1.2 (2026-06):
   _src()  – helper: aggiunge "(riga XML: N)" ai dettagli KO
   70033   – fix: lookup TIN include OtherUPE/ExcludedUPE
@@ -97,6 +102,17 @@ def _date(s):
         try: return datetime.strptime(s.strip(), fmt).date()
         except ValueError: continue
     return None
+
+# ── GlobeStatus helper ────────────────────────────────────────────────────────
+def _gs(id_el, ns=None) -> set:
+    """
+    Raccoglie tutti i valori GlobeStatus da un elemento ID.
+    NOTA 1: il nome dell'elemento è 'GlobeStatus' (non 'GloBEStatus').
+    NOTA 2: può apparire più volte (es. GIR301+GIR307) → serve _findall, non _find.
+    """
+    if id_el is None:
+        return set()
+    return {e.text for e in _findall(id_el, "globe:GlobeStatus", ns or NS) if e.text}
 
 # ── GUID placeholders ─────────────────────────────────────────────────────────
 def _has_guid(root):
@@ -486,7 +502,7 @@ def _check_other(root):
             if tot!="GIR3004" or unk!="TRUE" or iss: terrs["70002"].append(f"NOTIN: TypeOfTIN={tot!r} unk={unk!r} issuedBy={iss!r}{ln}")
         if unk=="TRUE":
             if val!="NOTIN" or tot!="GIR3004" or iss: terrs["70003"].append(f"unknown=TRUE: val={val!r} TypeOfTIN={tot!r}{ln}")
-        if iss=="IT" and val not in ("NOTIN","") and tot not in ("GIR3003","GIR3004"):
+        if iss=="IT" and val not in ("NOTIN","") and tot not in ("GIR3002","GIR3003","GIR3004"):
             if not (re.match(r"^\d{11}$",val) or re.match(r"^[A-Z0-9]{16}$",val)):
                 terrs["70004"].append(f"TIN IT non valido: {val!r}{ln}")
         if not tot: terrs["70005"].append(f"@TypeOfTIN assente (val={val!r}){ln}")
@@ -528,10 +544,10 @@ def _check_other(root):
     r=CheckResult("70009","GloBEStatus UPE non deve contenere: GIR305,GIR307-309,GIR312-315,GIR317,GIR318.","/GLOBE_OECD/GLOBEBody/GeneralSection/CorporateStructure/UPE/*/ID/GloBEStatus")
     bad=[]
     if cs:
-        for p in [".//globe:UPE/globe:ExcludedUPE/globe:ID/globe:GloBEStatus",".//globe:UPE/globe:OtherUPE/globe:ID/globe:GloBEStatus"]:
-            for ge in _findall(cs,p,ns):
-                fb=set((_t(ge) or "").split()) & GLOBE_STATUS_UPE_FORBIDDEN
-                if fb: bad.append(f"UPE GloBEStatus vietato: {fb}{_src(ge)}")
+        for p in [".//globe:UPE/globe:ExcludedUPE/globe:ID",".//globe:UPE/globe:OtherUPE/globe:ID"]:
+            for id_el in _findall(cs,p,ns):
+                fb = _gs(id_el, ns) & GLOBE_STATUS_UPE_FORBIDDEN
+                if fb: bad.append(f"UPE GlobeStatus vietato: {fb}{_src(id_el)}")
     if bad: r.ko("; ".join(bad[:3]))
     out.append(r)
 
@@ -571,13 +587,13 @@ def _check_other(root):
             id_=_find(ce,"globe:ID",ns)
             if id_ is None: continue
             tin=_t(_find(id_,"globe:TIN",ns))
-            gs=set((_t(_find(id_,"globe:GloBEStatus",ns)) or "").split())
+            gs=_gs(id_, ns)
             ce_gs[tin]=gs; ce_el_map[tin]=id_
     all_gs=set().union(*ce_gs.values()) if ce_gs else set()
 
     def _gspair(code,desc,fn,xpath):
         r=CheckResult(code,desc,xpath)
-        bad=[f"CE TIN={t!r} GloBEStatus={g}{_src(ce_el_map.get(t))}" for t,g in ce_gs.items() if fn(g)]
+        bad=[f"CE TIN={t!r} GlobeStatus={sorted(g)}{_src(ce_el_map.get(t))}" for t,g in ce_gs.items() if fn(g)]
         _ko_all(r, bad)
         return r
 
@@ -605,7 +621,7 @@ def _check_other(root):
         for ce in _findall(cs,"globe:CE",ns):
             id_=_find(ce,"globe:ID",ns)
             if id_ is None: continue
-            gs=set((_t(_find(id_,"globe:GloBEStatus",ns)) or "").split())
+            gs=_gs(id_, ns)
             if "GIR316" in gs or "GIR318" in gs:
                 oc=_find(ce,"globe:OwnershipChange",ns)
                 if oc is None or not _t(_find(oc,"globe:ChangeDate",ns)):
@@ -667,7 +683,7 @@ def _check_other(root):
 
     # ── 8.3.5 Ownership (70026-70031) ────────────────────────────────────────
     def _ow26(ce,ns):
-        id_=_find(ce,"globe:ID",ns); gs=set((_t(_find(id_,"globe:GloBEStatus",ns)) or "").split()) if id_ else set()
+        id_=_find(ce,"globe:ID",ns); gs=_gs(id_, ns) if id_ else set()
         if "GIR305" not in gs: return None
         for ow in _findall(ce,"globe:Ownership",ns):
             pe=_find(ow,"globe:OwnershipPercentage",ns); p=_decimal(_t(pe))
@@ -675,7 +691,7 @@ def _check_other(root):
                 return f"CE {_t(_find(id_,'globe:TIN',ns))!r} GIR305: pct={p} ≠ 100%{_src(pe)}"
         return None
     def _ow27(ce,ns):
-        id_=_find(ce,"globe:ID",ns); gs=set((_t(_find(id_,"globe:GloBEStatus",ns)) or "").split()) if id_ else set()
+        id_=_find(ce,"globe:ID",ns); gs=_gs(id_, ns) if id_ else set()
         if "GIR318" not in gs: return None
         for ow in _findall(ce,"globe:Ownership",ns):
             pe=_find(ow,"globe:OwnershipPercentage",ns); p=_decimal(_t(pe)); tv=_t(_find(ow,"globe:TIN",ns)); ot=_t(_find(ow,"globe:OwnershipType",ns))
@@ -683,7 +699,7 @@ def _check_other(root):
                 return f"CE {_t(_find(id_,'globe:TIN',ns))!r} GIR318: pct={p} tin={tv!r} ot={ot!r}{_src(pe)}"
         return None
     def _ow28(ce,ns):
-        id_=_find(ce,"globe:ID",ns); gs=set((_t(_find(id_,"globe:GloBEStatus",ns)) or "").split()) if id_ else set()
+        id_=_find(ce,"globe:ID",ns); gs=_gs(id_, ns) if id_ else set()
         if "GIR318" in gs: return None
         for ow in _findall(ce,"globe:Ownership",ns):
             pe=_find(ow,"globe:OwnershipPercentage",ns); p=_decimal(_t(pe))
@@ -732,11 +748,11 @@ def _check_other(root):
     if cs:
         for ce in _findall(cs,"globe:CE",ns):
             id_=_find(ce,"globe:ID",ns)
-            if id_ and "GIR306" in set((_t(_find(id_,"globe:GloBEStatus",ns)) or "").split()):
+            if id_ and "GIR306" in _gs(id_, ns):
                 for te in _findall(id_,"globe:TIN",ns): t306.add(_t(te))
         for ce in _findall(cs,"globe:CE",ns):
             id_=_find(ce,"globe:ID",ns)
-            if id_ and "GIR305" in set((_t(_find(id_,"globe:GloBEStatus",ns)) or "").split()):
+            if id_ and "GIR305" in _gs(id_, ns):
                 for ow in _findall(ce,"globe:Ownership",ns):
                     te=_find(ow,"globe:TIN",ns); ov=_t(te)
                     if ov and t306 and ov not in t306:
