@@ -4,6 +4,11 @@ Implementa tutti i check AdE verificabili offline dall'Allegato Tecnico (13 marz
   • Sezione 8.2  – Record Errors SEVERE  (60001-60028, esclusi 60002/60008/60009/60014)
   • Sezione 8.3  – Record Errors OTHER   (70001-70124)
 
+Changelog v1.3.1 (2026-06):
+  lxml    – fix: sostituiti tutti i truth-test su elementi (if el:) con 'is not None'
+              (con lxml un elemento senza figli valuta False → check silenziati)
+  70026   – fix: OwnershipPercentage accetta sia frazione (1) che percentuale (100)
+
 Changelog v1.3 (2026-06):
   70004   – fix: esclude TypeOfTIN=GIR3002 dal check issuedBy==ResCountryCode
   70016   – fix: elemento XML è GlobeStatus (non GloBEStatus); _findall per valori multipli
@@ -309,14 +314,14 @@ def _check_severe(root):
 
     # 60016
     r=CheckResult("60016","FilingInfo OECD0 → GeneralSection non può essere OECD1.","/GLOBE_OECD/GLOBEBody/FilingInfo/DocSpec/DocTypeIndic")
-    if filing_doc and gen_doc:
+    if filing_doc is not None and gen_doc is not None:
         if _t(_find(filing_doc,"globe:DocTypeIndic",ns))=="OECD0" and _t(_find(gen_doc,"globe:DocTypeIndic",ns))=="OECD1":
             r.ko("FilingInfo=OECD0 ma GeneralSection=OECD1")
     out.append(r)
 
     # 60017
     r=CheckResult("60017","Se FilingInfo/DocTypeIndic=OECD1, GeneralSection deve essere presente.","/GLOBE_OECD/GLOBEBody/FilingInfo/DocSpec/DocTypeIndic")
-    if filing_doc and _t(_find(filing_doc,"globe:DocTypeIndic",ns))=="OECD1" and gen_sec is None:
+    if filing_doc is not None and _t(_find(filing_doc,"globe:DocTypeIndic",ns))=="OECD1" and gen_sec is None:
         r.ko("FilingInfo=OECD1 ma GeneralSection assente.")
     out.append(r)
 
@@ -332,31 +337,31 @@ def _check_severe(root):
 
     # 60020
     r=CheckResult("60020","Period/Start non può essere successivo a Period/End.","/GLOBE_OECD/GLOBEBody/FilingInfo/Period/Start")
-    if filing_info:
+    if filing_info is not None:
         p=_find(filing_info,"globe:Period",ns)
-        if p:
+        if p is not None:
             s=_date(_t(_find(p,"globe:Start",ns))); e=_date(_t(_find(p,"globe:End",ns)))
             if s and e and s>e: r.ko(f"Start={s} > End={e}")
     out.append(r)
 
     # 60021
     r=CheckResult("60021","FilingInfo/Period/End non può essere successivo a ReportingPeriod.","/GLOBE_OECD/GLOBEBody/FilingInfo/Period/End")
-    if filing_info and rep_per_txt:
+    if filing_info is not None and rep_per_txt:
         p=_find(filing_info,"globe:Period",ns)
-        if p:
+        if p is not None:
             e=_date(_t(_find(p,"globe:End",ns))); rp=_date(rep_per_txt)
             if e and rp and e.year>rp.year: r.ko(f"Period/End={e} > ReportingPeriod={rp}")
     out.append(r)
 
     # 60022
     r=CheckResult("60022","Se FilingCE/Role=GIR401, FilingCE/TIN deve coincidere con un TIN UPE.","/GLOBE_OECD/GLOBEBody/FilingInfo/FilingCE/TIN")
-    if filing_info and gen_sec:
+    if filing_info is not None and gen_sec is not None:
         fce=_find(filing_info,"globe:FilingCE",ns)
-        if fce and _t(_find(fce,"globe:Role",ns))=="GIR401":
+        if fce is not None and _t(_find(fce,"globe:Role",ns))=="GIR401":
             ftin=_t(_find(fce,"globe:TIN",ns))
             cs2=_find(gen_sec,"globe:CorporateStructure",ns)
             upetins=set()
-            if cs2:
+            if cs2 is not None:
                 for p in [".//globe:UPE/globe:ExcludedUPE/globe:ID/globe:TIN",".//globe:UPE/globe:OtherUPE/globe:ID/globe:TIN"]:
                     for t in _findall(cs2,p,ns):
                         v=_t(t)
@@ -366,20 +371,20 @@ def _check_severe(root):
 
     # 60023
     r=CheckResult("60023","FilingCE/ResCountryCode deve coincidere con TransmittingCountry.","/GLOBE_OECD/GLOBEBody/FilingInfo/FilingCE/ResCountryCode")
-    if ms and filing_info:
+    if ms is not None and filing_info is not None:
         tc=_t(_find(ms,"globe:TransmittingCountry",ns))
         fce=_find(filing_info,"globe:FilingCE",ns)
-        rc=_t(_find(fce,"globe:ResCountryCode",ns)) if fce else ""
+        rc=_t(_find(fce,"globe:ResCountryCode",ns)) if fce is not None else ""
         if tc and rc and tc!=rc: r.ko(f"TransmittingCountry={tc!r} ≠ ResCountryCode={rc!r}")
     out.append(r)
 
     # 60024
     r=CheckResult("60024","Se SafeHarbour/ETRRange/SBIE/QDMTTut/GLoBETut presenti, JurWithTaxingRights/JurisdictionName deve essere valorizzato.","/GLOBE_OECD/GLOBEBody/Summary/JurWithTaxingRights/JurisdictionName")
-    if summary:
+    if summary is not None:
         has_d=any(_find(summary,t,ns) is not None for t in ["globe:SafeHarbour","globe:ETRRange","globe:SBIE","globe:QDMTTut","globe:GLoBETut"])
         if has_d:
             jwtr=_find(summary,"globe:JurWithTaxingRights",ns)
-            if not _t(_find(jwtr,"globe:JurisdictionName",ns) if jwtr else None): r.ko("JurisdictionName non valorizzato.")
+            if not _t(_find(jwtr,"globe:JurisdictionName",ns) if jwtr is not None else None): r.ko("JurisdictionName non valorizzato.")
     out.append(r)
 
     # 60025-60028 (formulas)
@@ -464,19 +469,19 @@ def _check_other(root):
     out=[]; ns=NS
     body        =_find(root,"globe:GLOBEBody",ns)
     ms          =_find(root,"globe:MessageSpec",ns)
-    filing_info =_find(body,"globe:FilingInfo",ns)      if body else None
-    gen_sec     =_find(body,"globe:GeneralSection",ns)  if body else None
-    summary_els =_findall(body,"globe:Summary",ns)      if body else []
-    jur_sections=_findall(body,"globe:JurisdictionSection",ns) if body else []
-    utpr_attr   =_find(body,"globe:UTPRAttribution",ns) if body else None
-    cs          =_find(gen_sec,"globe:CorporateStructure",ns) if gen_sec else None
-    period_el   =_find(filing_info,"globe:Period",ns)   if filing_info else None
-    period_end  =_date(_t(_find(period_el,"globe:End",ns)))   if period_el else None
-    period_start=_date(_t(_find(period_el,"globe:Start",ns))) if period_el else None
+    filing_info =_find(body,"globe:FilingInfo",ns)      if body is not None else None
+    gen_sec     =_find(body,"globe:GeneralSection",ns)  if body is not None else None
+    summary_els =_findall(body,"globe:Summary",ns)      if body is not None else []
+    jur_sections=_findall(body,"globe:JurisdictionSection",ns) if body is not None else []
+    utpr_attr   =_find(body,"globe:UTPRAttribution",ns) if body is not None else None
+    cs          =_find(gen_sec,"globe:CorporateStructure",ns) if gen_sec is not None else None
+    period_el   =_find(filing_info,"globe:Period",ns)   if filing_info is not None else None
+    period_end  =_date(_t(_find(period_el,"globe:End",ns)))   if period_el is not None else None
+    period_start=_date(_t(_find(period_el,"globe:Start",ns))) if period_el is not None else None
 
     def _ce_tins():
         t=set()
-        if cs:
+        if cs is not None:
             for e in _findall(cs,".//globe:CE/globe:ID/globe:TIN",ns):
                 v=_t(e)
                 if v: t.add(v)
@@ -484,7 +489,7 @@ def _check_other(root):
 
     def _upe_tins():
         t=set()
-        if cs:
+        if cs is not None:
             for p in [".//globe:UPE/globe:ExcludedUPE/globe:ID/globe:TIN",
                       ".//globe:UPE/globe:OtherUPE/globe:ID/globe:TIN"]:
                 for e in _findall(cs,p,ns):
@@ -529,9 +534,9 @@ def _check_other(root):
 
     # ── 8.3.2 RecJurCode/UPE/Rules (70008-70012) ─────────────────────────────
     r=CheckResult("70008","UTPRAttribution/RecJurCode deve essere la giurisdizione UPE o JurWithTaxingRights.","/GLOBE_OECD/GLOBEBody/UTPRAttribution/RecJurCode")
-    if utpr_attr and gen_sec:
+    if utpr_attr is not None and gen_sec is not None:
         uj=_t(_find(utpr_attr,"globe:RecJurCode",ns)); vj=set()
-        if cs:
+        if cs is not None:
             for p in [".//globe:UPE/globe:OtherUPE/globe:ID/globe:ResCountryCode",
                       ".//globe:UPE/globe:ExcludedUPE/globe:ID/globe:ResCountryCode"]:
                 for e in _findall(cs,p,ns): vj.add(_t(e))
@@ -543,7 +548,7 @@ def _check_other(root):
 
     r=CheckResult("70009","GloBEStatus UPE non deve contenere: GIR305,GIR307-309,GIR312-315,GIR317,GIR318.","/GLOBE_OECD/GLOBEBody/GeneralSection/CorporateStructure/UPE/*/ID/GloBEStatus")
     bad=[]
-    if cs:
+    if cs is not None:
         for p in [".//globe:UPE/globe:ExcludedUPE/globe:ID",".//globe:UPE/globe:OtherUPE/globe:ID"]:
             for id_el in _findall(cs,p,ns):
                 fb = _gs(id_el, ns) & GLOBE_STATUS_UPE_FORBIDDEN
@@ -553,7 +558,7 @@ def _check_other(root):
 
     r=CheckResult("70010","Per OtherUPE, ID/ResCountryCode deve avere un solo valore.","/GLOBE_OECD/GLOBEBody/GeneralSection/.../OtherUPE/ID/ResCountryCode")
     bad=[]
-    if cs:
+    if cs is not None:
         for e in _findall(cs,".//globe:UPE/globe:OtherUPE/globe:ID",ns):
             if len(_findall(e,"globe:ResCountryCode",ns))>1: bad.append(f"OtherUPE con più ResCountryCode{_src(e)}")
     _ko_all(r, bad)
@@ -561,7 +566,7 @@ def _check_other(root):
 
     r=CheckResult("70011","Per CE, ID/ResCountryCode deve avere un solo valore.","/GLOBE_OECD/GLOBEBody/GeneralSection/.../CE/ID/ResCountryCode")
     bad=[]
-    if cs:
+    if cs is not None:
         for e in _findall(cs,".//globe:CE/globe:ID",ns):
             if len(_findall(e,"globe:ResCountryCode",ns))>1: bad.append(f"CE con più ResCountryCode{_src(e)}")
     _ko_all(r, bad)
@@ -569,7 +574,7 @@ def _check_other(root):
 
     r=CheckResult("70012","Entità stesso ResCountryCode → stesso Rules (salvo GIR204).","/GLOBE_OECD/GLOBEBody/GeneralSection/.../Rules")
     bad=[]
-    if cs:
+    if cs is not None:
         rr={}
         for p in [".//globe:UPE/globe:ExcludedUPE/globe:ID",".//globe:UPE/globe:OtherUPE/globe:ID",".//globe:CE/globe:ID"]:
             for e in _findall(cs,p,ns):
@@ -582,7 +587,7 @@ def _check_other(root):
 
     # ── 8.3.3 GloBEStatus CE (70013-70021) ───────────────────────────────────
     ce_gs={}; ce_el_map={}
-    if cs:
+    if cs is not None:
         for ce in _findall(cs,"globe:CE",ns):
             id_=_find(ce,"globe:ID",ns)
             if id_ is None: continue
@@ -617,7 +622,7 @@ def _check_other(root):
 
     r=CheckResult("70021","CE con GIR316 o GIR318 deve avere OwnershipChange.","/GLOBE_OECD/GLOBEBody/GeneralSection/.../CE/ID/GloBEStatus")
     bad=[]
-    if cs:
+    if cs is not None:
         for ce in _findall(cs,"globe:CE",ns):
             id_=_find(ce,"globe:ID",ns)
             if id_ is None: continue
@@ -632,10 +637,10 @@ def _check_other(root):
     # ── 8.3.4 OwnershipChange (70022-70025) ──────────────────────────────────
     r=CheckResult("70022","OwnershipChange/ChangeDate non può essere anteriore a Period/Start.","/GLOBE_OECD/GLOBEBody/GeneralSection/.../CE/OwnershipChange/ChangeDate")
     bad=[]
-    if cs and period_start:
+    if cs is not None and period_start:
         for ce in _findall(cs,"globe:CE",ns):
             oc=_find(ce,"globe:OwnershipChange",ns)
-            if oc:
+            if oc is not None:
                 cd_el=_find(oc,"globe:ChangeDate",ns); cd=_date(_t(cd_el))
                 if cd and cd<period_start:
                     tin=_t(_find(_find(ce,"globe:ID",ns),"globe:TIN",ns)) if _find(ce,"globe:ID",ns) else "?"
@@ -645,10 +650,10 @@ def _check_other(root):
 
     r=CheckResult("70023","OwnershipChange/ChangeDate non può essere successiva a Period/End.","/GLOBE_OECD/GLOBEBody/GeneralSection/.../CE/OwnershipChange/ChangeDate")
     bad=[]
-    if cs and period_end:
+    if cs is not None and period_end:
         for ce in _findall(cs,"globe:CE",ns):
             oc=_find(ce,"globe:OwnershipChange",ns)
-            if oc:
+            if oc is not None:
                 cd_el=_find(oc,"globe:ChangeDate",ns); cd=_date(_t(cd_el))
                 if cd and cd>period_end:
                     tin=_t(_find(_find(ce,"globe:ID",ns),"globe:TIN",ns)) if _find(ce,"globe:ID",ns) else "?"
@@ -658,7 +663,7 @@ def _check_other(root):
 
     r=CheckResult("70024","PreOwnership non deve essere compilato quando PreGloBEStatus=GIR719.","/GLOBE_OECD/GLOBEBody/GeneralSection/.../CE/OwnershipChange/PreOwnership")
     bad=[]
-    if cs:
+    if cs is not None:
         for ce in _findall(cs,"globe:CE",ns):
             oc=_find(ce,"globe:OwnershipChange",ns)
             if oc and _t(_find(oc,"globe:PreGloBEStatus",ns))=="GIR719" and _find(oc,"globe:PreOwnership",ns) is not None:
@@ -668,7 +673,7 @@ def _check_other(root):
 
     r=CheckResult("70025","Se PreOwnership/OwnershipType contiene GIR805/GIR806, TIN deve essere GIR3004/NOTIN.","/GLOBE_OECD/GLOBEBody/GeneralSection/.../CE/OwnershipChange/PreOwnership/TIN")
     bad=[]
-    if cs:
+    if cs is not None:
         for ce in _findall(cs,"globe:CE",ns):
             oc=_find(ce,"globe:OwnershipChange",ns)
             if oc is None: continue
@@ -683,15 +688,17 @@ def _check_other(root):
 
     # ── 8.3.5 Ownership (70026-70031) ────────────────────────────────────────
     def _ow26(ce,ns):
-        id_=_find(ce,"globe:ID",ns); gs=_gs(id_, ns) if id_ else set()
+        id_=_find(ce,"globe:ID",ns); gs=_gs(id_, ns) if id_ is not None else set()
         if "GIR305" not in gs: return None
         for ow in _findall(ce,"globe:Ownership",ns):
             pe=_find(ow,"globe:OwnershipPercentage",ns); p=_decimal(_t(pe))
-            if p is not None and p!=Decimal("100"):
+            # FIX v1.3.1: OwnershipPercentage può essere espresso come frazione (1 = 100%)
+            # o come percentuale (100 = 100%). Entrambe le convenzioni sono accettate da AdE.
+            if p is not None and p!=Decimal("100") and p!=Decimal("1"):
                 return f"CE {_t(_find(id_,'globe:TIN',ns))!r} GIR305: pct={p} ≠ 100%{_src(pe)}"
         return None
     def _ow27(ce,ns):
-        id_=_find(ce,"globe:ID",ns); gs=_gs(id_, ns) if id_ else set()
+        id_=_find(ce,"globe:ID",ns); gs=_gs(id_, ns) if id_ is not None else set()
         if "GIR318" not in gs: return None
         for ow in _findall(ce,"globe:Ownership",ns):
             pe=_find(ow,"globe:OwnershipPercentage",ns); p=_decimal(_t(pe)); tv=_t(_find(ow,"globe:TIN",ns)); ot=_t(_find(ow,"globe:OwnershipType",ns))
@@ -699,7 +706,7 @@ def _check_other(root):
                 return f"CE {_t(_find(id_,'globe:TIN',ns))!r} GIR318: pct={p} tin={tv!r} ot={ot!r}{_src(pe)}"
         return None
     def _ow28(ce,ns):
-        id_=_find(ce,"globe:ID",ns); gs=_gs(id_, ns) if id_ else set()
+        id_=_find(ce,"globe:ID",ns); gs=_gs(id_, ns) if id_ is not None else set()
         if "GIR318" in gs: return None
         for ow in _findall(ce,"globe:Ownership",ns):
             pe=_find(ow,"globe:OwnershipPercentage",ns); p=_decimal(_t(pe))
@@ -707,7 +714,7 @@ def _check_other(root):
                 return f"CE {_t(_find(id_,'globe:TIN',ns))!r}: pct=0% (non GIR318){_src(pe)}"
         return None
 
-    if cs:
+    if cs is not None:
         for code,desc,fn in [
             ("70026","Se GloBEStatus=GIR305, OwnershipPercentage deve essere 100%.",_ow26),
             ("70027","Se GloBEStatus=GIR318, pct=0%, TIN=NOTIN, Type=GIR806.",_ow27),
@@ -721,7 +728,7 @@ def _check_other(root):
     r=CheckResult("70029","Se OwnershipType contiene GIR801, TIN deve corrispondere a un TIN UPE.","/GLOBE_OECD/GLOBEBody/GeneralSection/.../CE/Ownership/TIN")
     bad=[]
     ut=_upe_tins()
-    if cs:
+    if cs is not None:
         for ce in _findall(cs,"globe:CE",ns):
             for ow in _findall(ce,"globe:Ownership",ns):
                 if "GIR801" in set((_t(_find(ow,"globe:OwnershipType",ns)) or "").split()):
@@ -733,7 +740,7 @@ def _check_other(root):
     r=CheckResult("70030","Se OwnershipType contiene GIR802/803/804, TIN deve corrispondere a un CE TIN.","/GLOBE_OECD/GLOBEBody/GeneralSection/.../CE/Ownership/TIN")
     bad=[]
     ct=_ce_tins()
-    if cs:
+    if cs is not None:
         for ce in _findall(cs,"globe:CE",ns):
             for ow in _findall(ce,"globe:Ownership",ns):
                 ots=set((_t(_find(ow,"globe:OwnershipType",ns)) or "").split())
@@ -745,14 +752,14 @@ def _check_other(root):
 
     r=CheckResult("70031","Se GloBEStatus=GIR305, Ownership/TIN deve essere uguale a un TIN con GIR306.","/GLOBE_OECD/GLOBEBody/GeneralSection/.../CE/Ownership/TIN")
     bad=[]; t306=set()
-    if cs:
+    if cs is not None:
         for ce in _findall(cs,"globe:CE",ns):
             id_=_find(ce,"globe:ID",ns)
-            if id_ and "GIR306" in _gs(id_, ns):
+            if id_ is not None and "GIR306" in _gs(id_, ns):
                 for te in _findall(id_,"globe:TIN",ns): t306.add(_t(te))
         for ce in _findall(cs,"globe:CE",ns):
             id_=_find(ce,"globe:ID",ns)
-            if id_ and "GIR305" in _gs(id_, ns):
+            if id_ is not None and "GIR305" in _gs(id_, ns):
                 for ow in _findall(ce,"globe:Ownership",ns):
                     te=_find(ow,"globe:TIN",ns); ov=_t(te)
                     if ov and t306 and ov not in t306:
@@ -763,11 +770,11 @@ def _check_other(root):
     # ── 8.3.6 QIIR (70032) ───────────────────────────────────────────────────
     r=CheckResult("70032","Se CE/QIIR è compilato, CE/ID/Rules deve contenere GIR201 o GIR202.","/GLOBE_OECD/GLOBEBody/GeneralSection/.../CE/QIIR")
     bad=[]
-    if cs:
+    if cs is not None:
         for ce in _findall(cs,"globe:CE",ns):
             q=_find(ce,"globe:QIIR",ns)
-            if q:
-                id_=_find(ce,"globe:ID",ns); rules=set((_t(_find(id_,"globe:Rules",ns)) or "").split()) if id_ else set()
+            if q is not None:
+                id_=_find(ce,"globe:ID",ns); rules=set((_t(_find(id_,"globe:Rules",ns)) or "").split()) if id_ is not None else set()
                 if not rules&{"GIR201","GIR202"}:
                     bad.append(f"CE {_t(_find(id_,'globe:TIN',ns)) if id_ else '?'!r} ha QIIR ma Rules={rules}{_src(q)}")
     _ko_all(r, bad)
@@ -782,9 +789,9 @@ def _check_other(root):
     r=CheckResult("70033","CE/QIIR/Exception/TIN deve corrispondere al TIN di un altro CE nella CorporateStructure.","/GLOBE_OECD/GLOBEBody/GeneralSection/.../CE/QIIR/Exception/TIN")
     bad_ko=[]; bad_warn=[]
     ce_tins_set=_ce_tins(); upe_tins_set=_upe_tins()
-    if cs:
+    if cs is not None:
         for ce in _findall(cs,"globe:CE",ns):
-            id_=_find(ce,"globe:ID",ns); own=_t(_find(id_,"globe:TIN",ns)) if id_ else ""
+            id_=_find(ce,"globe:ID",ns); own=_t(_find(id_,"globe:TIN",ns)) if id_ is not None else ""
             q=_find(ce,"globe:QIIR",ns)
             if q is None: continue
             for exc in _findall(q,"globe:Exception",ns):
@@ -803,13 +810,13 @@ def _check_other(root):
     # 70034 FIX: controlla Art2.1.3 solo se elemento presente
     r=CheckResult("70034","Se POPE-IPE=GIR902 ed Exception compilato, Art2.1.3/Status deve essere TRUE.","/GLOBE_OECD/GLOBEBody/GeneralSection/.../CE/QIIR/POPE-IPE")
     bad=[]
-    if cs:
+    if cs is not None:
         for ce in _findall(cs,"globe:CE",ns):
             q=_find(ce,"globe:QIIR",ns)
             if q is None: continue
             if _t(_find(q,"globe:POPE-IPE",ns))=="GIR902":
                 exc=_find(q,"globe:Exception",ns)
-                if exc:
+                if exc is not None:
                     a213=_find(exc,"globe:Art2.1.3",ns)
                     if a213 is None: continue   # altra eccezione → PASS
                     se=_find(a213,"globe:Status",ns)
@@ -821,13 +828,13 @@ def _check_other(root):
     # 70035 FIX: controlla Art2.1.5 solo se elemento presente
     r=CheckResult("70035","Se POPE-IPE=GIR901 ed Exception compilato, Art2.1.5/Status deve essere TRUE.","/GLOBE_OECD/GLOBEBody/GeneralSection/.../CE/QIIR/POPE-IPE")
     bad=[]
-    if cs:
+    if cs is not None:
         for ce in _findall(cs,"globe:CE",ns):
             q=_find(ce,"globe:QIIR",ns)
             if q is None: continue
             if _t(_find(q,"globe:POPE-IPE",ns))=="GIR901":
                 exc=_find(q,"globe:Exception",ns)
-                if exc:
+                if exc is not None:
                     a215=_find(exc,"globe:Art2.1.5",ns)
                     if a215 is None: continue
                     se=_find(a215,"globe:Status",ns)
@@ -856,8 +863,8 @@ def _check_other(root):
 def _check_summary(summary_els, jur_sections, filing_info, ns):
     from collections import defaultdict
     out=[]
-    pe=_find(filing_info,"globe:Period",ns) if filing_info else None
-    period_end=_date(_t(_find(pe,"globe:End",ns))) if pe else None
+    pe=_find(filing_info,"globe:Period",ns) if filing_info is not None else None
+    period_end=_date(_t(_find(pe,"globe:End",ns))) if pe is not None else None
 
     # 70036
     r=CheckResult("70036","Se una giurisdizione ha più Subgroup, la Summary deve essere ripetuta.","/GLOBE_OECD/GLOBEBody/Summary/Jurisdiction/Subgroup")
@@ -916,9 +923,9 @@ def _check_summary(summary_els, jur_sections, filing_info, ns):
     # 70041
     r=CheckResult("70041","Se CFSofUPE=GIR502/GIR504, SafeHarbour non può contenere GIR1207/1208/1209.","/GLOBE_OECD/GLOBEBody/FilingInfo/AccountingInfo/CFSofUPE")
     bad=[]
-    if filing_info:
+    if filing_info is not None:
         acc=_find(filing_info,"globe:AccountingInfo",ns)
-        cfs=_t(_find(acc,"globe:CFSofUPE",ns)) if acc else ""
+        cfs=_t(_find(acc,"globe:CFSofUPE",ns)) if acc is not None else ""
         if cfs in ("GIR502","GIR504"):
             for s in summary_els:
                 for sh in _findall(s,"globe:SafeHarbour",ns):
@@ -966,7 +973,7 @@ def _check_jur_etr(summary_els, jur_sections, ns):
         jn=_t(_find(js,"globe:Jurisdiction",ns))
         for etr in _findall(js,".//globe:GLoBETax/globe:ETR",ns):
             es=_find(etr,"globe:ETRStatus",ns)
-            if es and _find(es,"globe:ETRException",ns) is None and _find(es,"globe:ETRComputation",ns) is None:
+            if es is not None and _find(es,"globe:ETRException",ns) is None and _find(es,"globe:ETRComputation",ns) is None:
                 bad.append(f"{jn}: ETRStatus senza ETRException né ETRComputation{_src(es)}")
     _ko_all(r, bad)
     out.append(r)
@@ -1065,7 +1072,7 @@ def _check_jur_etr(summary_els, jur_sections, ns):
             exc=_find(es,"globe:ETRException",ns)
             if exc is None: continue
             tcsh=_find(exc,"globe:TransitionalCbCRSafeHarbour",ns)
-            if tcsh:
+            if tcsh is not None:
                 sg_types={_t(_find(sg,"globe:TypeofSubGroup",ns)) for sg in _findall(etr,"globe:SubGroup",ns)}
                 if not sg_types&{"GIR1607","GIR1608"}:
                     bad.append(f"{jn}: TransitionalCbCRSH presente ma SubGroup TypeofSubGroup≠GIR1607/1608{_src(tcsh)}")
@@ -1241,9 +1248,9 @@ def _check_utpr_sh(summary_els, jur_sections, ns):
         jn=_t(_find(js,"globe:Jurisdiction",ns))
         if "GIR1205" not in sh_jur.get(jn,set()): continue
         for etr in _findall(js,".//globe:GLoBETax/globe:ETR",ns):
-            es=_find(etr,"globe:ETRStatus",ns); exc=_find(es,"globe:ETRException",ns) if es else None
-            tcsh=_find(exc,"globe:TransitionalCbCRSafeHarbour",ns) if exc else None
-            profit=_decimal(_t(_find(tcsh,"globe:Profit",ns))) if tcsh else None
+            es=_find(etr,"globe:ETRStatus",ns); exc=_find(es,"globe:ETRException",ns) if es is not None else None
+            tcsh=_find(exc,"globe:TransitionalCbCRSafeHarbour",ns) if exc is not None else None
+            profit=_decimal(_t(_find(tcsh,"globe:Profit",ns))) if tcsh is not None else None
             if profit is not None and profit<=0: continue
             for oc in _findall(etr,".//globe:ETRComputation/globe:OverallComputation",ns):
                 if _find(oc,"globe:SubstanceExclusion",ns) is None: bad.append(f"{jn}: GIR1205 ma SubstanceExclusion assente (Profit>0)")
@@ -1296,7 +1303,7 @@ def _check_elections(jur_sections, ns):
             if els is None: continue
             for ch in els:
                 rv=_find(ch,"globe:RevocationYear",ns)
-                if rv and _t(_find(ch,"globe:Status",ns)).upper()!="FALSE": bad.append(f"{jn}: CEComputation RevocationYear con Status≠FALSE{_src(rv)}")
+                if rv is not None and _t(_find(ch,"globe:Status",ns)).upper()!="FALSE": bad.append(f"{jn}: CEComputation RevocationYear con Status≠FALSE{_src(rv)}")
     _ko_all(r, bad)
     out.append(r)
 
@@ -1728,7 +1735,7 @@ def _check_excess(jur_sections, ns):
     for js in jur_sections:
         jn=_t(_find(js,"globe:Jurisdiction",ns))
         for oc in _findall(js,".//globe:ETRComputation/globe:OverallComputation",ns):
-            en=_find(oc,"globe:ExcessNegTaxExpense",ns); ge=_decimal(_t(_find(en,"globe:GeneratedInRFY",ns))) if en else None
+            en=_find(oc,"globe:ExcessNegTaxExpense",ns); ge=_decimal(_t(_find(en,"globe:GeneratedInRFY",ns))) if en is not None else None
             for adj in _findall(oc,"globe:AdjustedCoveredTax/globe:Adjustments",ns):
                 if _t(_find(adj,"globe:AdjustmentItem",ns))=="GIR2719":
                     ae=_find(adj,"globe:Amount",ns); amt=_decimal(_t(ae))
@@ -1742,7 +1749,7 @@ def _check_excess(jur_sections, ns):
     for js in jur_sections:
         jn=_t(_find(js,"globe:Jurisdiction",ns))
         for oc in _findall(js,".//globe:ETRComputation/globe:OverallComputation",ns):
-            en=_find(oc,"globe:ExcessNegTaxExpense",ns); ut=_decimal(_t(_find(en,"globe:UtilizedInRFY",ns))) if en else None
+            en=_find(oc,"globe:ExcessNegTaxExpense",ns); ut=_decimal(_t(_find(en,"globe:UtilizedInRFY",ns))) if en is not None else None
             for adj in _findall(oc,"globe:AdjustedCoveredTax/globe:Adjustments",ns):
                 if _t(_find(adj,"globe:AdjustmentItem",ns))=="GIR2720":
                     ae=_find(adj,"globe:Amount",ns); amt=_decimal(_t(ae))
@@ -1979,7 +1986,7 @@ def _check_iir_utpr(jur_sections, utpr_attr, ns):
     ]:
         r=CheckResult(code,desc,field)
         bad=[]
-        if utpr_attr:
+        if utpr_attr is not None:
             for attr in _findall(utpr_attr,"globe:Attribution",ns):
                 if check_fn(attr,ns): bad.append(f"Attribution violazione {code}{_src(attr)}")
         _ko_all(r, bad)
@@ -1988,7 +1995,7 @@ def _check_iir_utpr(jur_sections, utpr_attr, ns):
     # 70105
     r=CheckResult("70105","UTPRTopUpTaxCarriedForward = CarryForward + Attributed - AddCashTaxExpense.","/GLOBE_OECD/GLOBEBody/UTPRAttribution/Attribution/UTPRTopUpTaxCarriedForward")
     bad=[]
-    if utpr_attr:
+    if utpr_attr is not None:
         for attr in _findall(utpr_attr,"globe:Attribution",ns):
             ce=_find(attr,"globe:UTPRTopUpTaxCarriedForward",ns); car=_decimal(_t(ce))
             fw=_decimal(_t(_find(attr,"globe:UTPRTopUpTaxCarryForward",ns))) or Decimal(0)
@@ -2029,7 +2036,7 @@ def _check_ce_fanil(jur_sections, ns):
                 ee=_find(adj,"globe:UPEAdjustments/globe:Reductions/globe:Exception",ns)
                 if ee is not None and _t(ee).upper()=="TRUE":
                     cba=_find(adj,"globe:CrossBorderAdjustments",ns)
-                    if cba: bad.append(f"{jn}: Exception=TRUE ma CrossBorderAdjustments presente{_src(cba)}")
+                    if cba is not None: bad.append(f"{jn}: Exception=TRUE ma CrossBorderAdjustments presente{_src(cba)}")
     _ko_all(r, bad)
     out.append(r)
 
@@ -2250,7 +2257,7 @@ def _check_ce_ngi(jur_sections, ns):
         jn=_t(_find(js,"globe:Jurisdiction",ns))
         for ce in _findall(js,".//globe:CEComputation",ns):
             ae=_find(ce,"globe:AdjustedIncomeTax/globe:CrossAllocation/globe:Additions",ns)
-            if ae:
+            if ae is not None:
                 v=_decimal(_t(ae))
                 if v is not None and v<0: bad.append(f"{jn}: CrossAllocation/Additions={v}<0{_src(ae)}")
     _ko_all(r, bad)
@@ -2263,7 +2270,7 @@ def _check_ce_ngi(jur_sections, ns):
         jn=_t(_find(js,"globe:Jurisdiction",ns))
         for ce in _findall(js,".//globe:CEComputation",ns):
             re=_find(ce,"globe:AdjustedIncomeTax/globe:CrossAllocation/globe:Reductions",ns)
-            if re:
+            if re is not None:
                 v=_decimal(_t(re))
                 if v is not None and v>0: bad.append(f"{jn}: CrossAllocation/Reductions={v}>0{_src(re)}")
     _ko_all(r, bad)
