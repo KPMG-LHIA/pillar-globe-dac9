@@ -185,12 +185,72 @@ def _check_file_errors(root, xml_path):
     except UnicodeDecodeError as e: r.ko(f"Byte non UTF-8 validi: {e}")
     out.append(r)
 
-    r = CheckResult("C0004","I caratteri speciali XML devono essere codificati come entità.","/GLOBE_OECD")
+    r = CheckResult("C0004","I caratteri speciali XML devono essere codificati come entità predefinite.","/GLOBE_OECD")
     raw_text = (raw[3:] if raw[:3]==b"\xef\xbb\xbf" else raw).decode("utf-8",errors="replace")
-    if re.findall(r"&(?!amp;|lt;|gt;|apos;|quot;|#)", raw_text):
-        for i,line in enumerate(raw_text.splitlines(),1):
-            if re.search(r"&(?!amp;|lt;|gt;|apos;|quot;|#)", line):
-                r.ko(f"'&' non codificato riga {i}: {line.strip()[:80]!r}"); break
+    _c0004_problems = []
+
+    _decl_end = raw_text.find("?>")+2 if raw_text.startswith("<?xml") else 0
+    _body = raw_text[_decl_end:]
+    _tag_split = re.split(r"(<[^>]*>)", _body)  # alterna tag e contenuto testuale
+    _orphan_amp_re = re.compile(r"&(?!amp;|lt;|gt;|apos;|quot;|#\d+;|#x[0-9A-Fa-f]+;)")
+
+    def _first_line_with(predicate) -> tuple[int, str] | None:
+        """Trova la prima riga (1-indexed) il cui segmento di TESTO (non tag)
+        soddisfa predicate(segmento). Ignora occorrenze dentro tag/attributi
+        e dentro la dichiarazione XML, già esclusa da _body."""
+        pos = 0
+        for seg in _tag_split:
+            if not seg.startswith("<") and predicate(seg):
+                line_no = _body[:pos].count("\n") + 1
+                lines = _body.splitlines()
+                line_text = lines[line_no-1] if 0 <= line_no-1 < len(lines) else ""
+                return line_no, line_text
+            pos += len(seg)
+        return None
+
+    _AUTO_FIX_NOTE = (
+        " — NOTA: verrà corretto automaticamente in Step 2 (incapsulamento "
+        "shell telematica), nessuna azione richiesta sul file sorgente."
+    )
+
+    # 1) '&' non seguito da una entity predefinita o numerica valida.
+    #    NOTA TECNICA: un '&' realmente orfano rende il file XML malformato,
+    #    quindi in pratica fa già fallire etree.parse() in validate() (errore
+    #    50001, KO bloccante) PRIMA di arrivare qui — questo branch a valle
+    #    di un parsing riuscito è quindi raggiunto solo in scenari residuali
+    #    (chiamata diretta di _check_file_errors su testo non passato per
+    #    parsing standard). Mantenuto per defensive coding; auto-corretto
+    #    anche dalla shell (vedi shell_telematico._escape_predefined_
+    #    entities_in_text_nodes) qualora il file arrivi comunque fino a qui.
+    found = _first_line_with(lambda seg: _orphan_amp_re.search(seg))
+    if found:
+        line_no, line_text = found
+        _c0004_problems.append(
+            f"'&' non codificato come &amp; riga {line_no}: {line_text.strip()[:80]!r}{_AUTO_FIX_NOTE}"
+        )
+
+    # 2) Apostrofo (') letterale nel CONTENUTO TESTUALE (non negli attributi/tag).
+    #    AdE richiede &apos; anche se l'apostrofo letterale è XML valido di per sé
+    #    (errore riscontrato in produzione su nomi societari con apostrofo,
+    #    es. "RAI PUBBLICITA' SPA"). Auto-corretto dalla shell → WARN.
+    found = _first_line_with(lambda seg: "'" in seg)
+    if found:
+        line_no, line_text = found
+        _c0004_problems.append(
+            f"apostrofo (') non codificato come &apos; riga {line_no}: {line_text.strip()[:80]!r}{_AUTO_FIX_NOTE}"
+        )
+
+    # 3) Virgolette doppie (") letterali nel contenuto testuale (stesso principio).
+    #    Auto-corretto dalla shell → WARN.
+    found = _first_line_with(lambda seg: '"' in seg)
+    if found:
+        line_no, line_text = found
+        _c0004_problems.append(
+            f"virgolette (\") non codificate come &quot; riga {line_no}: {line_text.strip()[:80]!r}{_AUTO_FIX_NOTE}"
+        )
+
+    if _c0004_problems:
+        r.warn("; ".join(_c0004_problems))
     out.append(r)
 
     out.append(CheckResult("50001","Il file XML è ben formato e parsabile.","/GLOBE_OECD"))

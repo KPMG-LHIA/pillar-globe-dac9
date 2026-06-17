@@ -109,6 +109,58 @@ def _sanitize_filename(name: str) -> str:
     name = name.strip(".-_")                   # rimuovi _ - . iniziali/finali
     return name or "output"
 
+
+def _escape_predefined_entities_in_text_nodes(xml_bytes: bytes) -> bytes:
+    """
+    Codifica come entity predefinite, SOLO all'interno dei nodi di testo
+    (contenuto tra '>' e '<' successivo, mai dentro tag/attributi né nella
+    dichiarazione XML in testa al file):
+      - apostrofo (')         → &apos;
+      - virgolette doppie (") → &quot;
+      - '&' orfano (non già parte di una entity valida) → &amp;
+
+    Il controllo C0004 di AdE ("Il file non contiene Predefined Character
+    Entity") richiede questa codifica anche se questi caratteri letterali
+    sono XML validi di per sé: lxml non lo fa automaticamente in fase di
+    tostring(), quindi va corretto qui in post-processing, sul flusso di
+    byte già serializzato e con namespace/struttura già finalizzati.
+
+    Il caso '&' richiede attenzione: un '&' già parte di una entity valida
+    (&amp; &lt; &gt; &apos; &quot; o una entity numerica &#NNN;/&#xHHH;) NON
+    deve essere ri-codificato, altrimenti si otterrebbe una doppia codifica
+    (es. &amp; → &amp;amp;). Per questo il replace di '&' avviene PRIMA di
+    quello di apostrofo/virgolette (così non rientra mai un '&' generato in
+    questo stesso passaggio) e usa un'espressione negative-lookahead per
+    saltare le entity già corrette.
+    """
+    text = xml_bytes.decode("utf-8")
+
+    # Isola la dichiarazione XML iniziale (<?xml ... ?>) per non toccarla.
+    decl = ""
+    body = text
+    if text.startswith("<?xml"):
+        end_decl = text.find("?>") + 2
+        decl = text[:end_decl]
+        body = text[end_decl:]
+
+    _ORPHAN_AMP = re.compile(r"&(?!amp;|lt;|gt;|apos;|quot;|#\d+;|#x[0-9A-Fa-f]+;)")
+
+    # Sostituisce '&' orfano, apostrofo e virgolette solo nei segmenti di
+    # testo tra tag, cioè alternando split su '<' e '>' e operando solo
+    # sulle porzioni "fuori tag". L'ordine (prima '&', poi '\'' e '"') evita
+    # la doppia codifica delle entity appena generate.
+    def _replace_in_text_segments(s: str) -> str:
+        parts = re.split(r"(<[^>]*>)", s)  # mantiene i tag come elementi separati
+        for i, part in enumerate(parts):
+            if not part.startswith("<"):
+                part = _ORPHAN_AMP.sub("&amp;", part)
+                part = part.replace("'", "&apos;").replace('"', "&quot;")
+                parts[i] = part
+        return "".join(parts)
+
+    body = _replace_in_text_segments(body)
+    return (decl + body).encode("utf-8")
+
 # ---------------------------------------------------------------------------
 # Funzione principale
 # ---------------------------------------------------------------------------
@@ -217,6 +269,15 @@ def encapsulate(
         encoding="utf-8",
         pretty_print=True,
     )
+
+    # AdE (controllo C0004) richiede che apostrofo e virgolette doppie nel
+    # testo siano codificati come Predefined Character Entity (&apos;/&quot;)
+    # e non come caratteri letterali. lxml non lo fa di default (sono XML
+    # validi così come sono), quindi li correggiamo in post-processing, solo
+    # nei nodi di testo (tra '>' e '<'), per non toccare eventuali occorrenze
+    # dentro attributi o nella dichiarazione XML.
+    out_bytes = _escape_predefined_entities_in_text_nodes(out_bytes)
+
     out_path.write_bytes(out_bytes)
 
     print(f"  [shell] Creato: {out_path.name}  ({len(out_bytes):,} byte)")
