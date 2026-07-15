@@ -154,6 +154,7 @@ def parse_globe(xml_path):
         "add_info": _g(fi, "globe:AdditionalInfo"),
         "doc_type": lk(TYPE_INDIC, _g(ds, "stf:DocTypeIndic")),
         "doc_ref":  _g(ds, "stf:DocRefId"),
+        "rec_jur":  ", ".join(el.text.strip() for el in gs.findall("globe:RecJurCode", NS) if el is not None and el.text) if gs is not None else "",
     }
 
     # CorporateStructure
@@ -172,6 +173,7 @@ def parse_globe(xml_path):
                         "status": ", ".join([lk(GLOBE_STATUS, s) for s in _ga(idd, "globe:GlobeStatus")]),
                         "rules": [lk(RULES, r) for r in _ga(idd, "globe:Rules")],
                         "ownership": [],
+                        "qiir": None,
                     })
         for ce_el in cs.findall("globe:CE", NS):
             idd = ce_el.find("globe:ID", NS)
@@ -180,6 +182,24 @@ def parse_globe(xml_path):
                 "tin":  _g(ow, "globe:TIN"),
                 "pct":  _pct(_g(ow, "globe:OwnershipPercentage")),
             } for ow in ce_el.findall("globe:Ownership", NS)]
+            qiir_el = ce_el.find("globe:QIIR", NS)
+            qiir = None
+            if qiir_el is not None:
+                exc_el = qiir_el.find("globe:Exception", NS)
+                exc_article, exc_tin = None, None
+                if exc_el is not None:
+                    rule_el = exc_el.find("globe:ExceptionRule", NS)
+                    if rule_el is not None:
+                        for child in rule_el:
+                            if (child.text or "").strip().lower() in ("true", "1"):
+                                exc_article = etree.QName(child).localname
+                                break
+                    exc_tin = _g(exc_el, "globe:TIN")
+                qiir = {
+                    "pope_ipe":    _g(qiir_el, "globe:POPE-IPE"),
+                    "exc_article": exc_article,
+                    "exc_tin":     exc_tin,
+                }
             if idd is not None:
                 entities.append({
                     "type": "CE",
@@ -189,6 +209,7 @@ def parse_globe(xml_path):
                     "status": ", ".join([lk(GLOBE_STATUS, s) for s in _ga(idd, "globe:GlobeStatus")]),
                     "rules": [lk(RULES, r) for r in _ga(idd, "globe:Rules")],
                     "ownership": owns,
+                    "qiir": qiir,
                 })
         for ex in cs.findall("globe:ExcludedEntity", NS):
             excluded_entities.append({
@@ -208,6 +229,7 @@ def parse_globe(xml_path):
         summaries.append({
             "jurisdiction":  jur_name,
             "etr_code":      etr_code,
+            "rec_jur":       ", ".join(_ga(s, "globe:RecJurCode")) or "—",
             "safe_harbours": [lk(SAFE_HARBOUR, sh) for sh in _ga(s, "globe:SafeHarbour")],
             "qdmtt_ut":      lk(QDMTT_UT, _g(s, "globe:QDMTTut")),
             "globe_ut":      lk(GLOBE_UT,  _g(s, "globe:GLoBETut")),
@@ -437,7 +459,8 @@ def _html(data, xml_name):
           row("Valuta consolidato", fi["currency"]) +
           row("Standard contabile (FAS)", fi["fas"]) +
           row("CFSofUPE", fi["cfs"]) +
-          (row("Informazioni aggiuntive", fi["add_info"]) if fi.get("add_info") else ""))
+          (row("Informazioni aggiuntive", fi["add_info"]) if fi.get("add_info") else "") +
+          (row("Giurisdizioni destinatarie (RecJurCode)", fi["rec_jur"]) if fi.get("rec_jur") else ""))
     mr = (row("MessageTypeIndic", f'<span class="{msg_type_class}">{ms["type_indic"]}</span>') +
           row("MessageRefId", ms["ref_id"]) +
           row("Timestamp", ms["timestamp"]) +
@@ -454,8 +477,18 @@ def _html(data, xml_name):
     for e in d["entities"]:
         b = '<span class="bu">UPE</span>' if e["type"] == "UPE" else '<span class="bc">CE</span>'
         owns = "<br>".join(f"<small>{o['type']} · {o['tin']} · {o['pct']}</small>" for o in e["ownership"]) or "—"
-        er += f"<tr><td>{b}</td><td><strong>{e['name'] or '—'}</strong></td><td>{e['country'] or '—'}</td><td><code>{e['tin'] or '—'}</code></td><td>{e['status']}</td><td><small>{'<br>'.join(e['rules']) or '—'}</small></td><td>{owns}</td></tr>"
-    html_corp = tbl(er, ["Tipo", "Nome", "Paese", "TIN", "GlobeStatus", "Regole", "Ownership"])
+        q = e.get("qiir")
+        if q:
+            qiir_txt = f"<small>POPE-IPE: {q['pope_ipe'] or '—'}"
+            if q["exc_article"]:
+                qiir_txt += f"<br>Exception: {q['exc_article']}"
+            if q["exc_tin"]:
+                qiir_txt += f"<br>TIN: {q['exc_tin']}"
+            qiir_txt += "</small>"
+        else:
+            qiir_txt = "—"
+        er += f"<tr><td>{b}</td><td><strong>{e['name'] or '—'}</strong></td><td>{e['country'] or '—'}</td><td><code>{e['tin'] or '—'}</code></td><td>{e['status']}</td><td><small>{'<br>'.join(e['rules']) or '—'}</small></td><td>{owns}</td><td>{qiir_txt}</td></tr>"
+    html_corp = tbl(er, ["Tipo", "Nome", "Paese", "TIN", "GlobeStatus", "Regole", "Ownership", "QIIR"])
 
     if d["excluded"]:
         ex_rows = "".join(f"<tr><td>{e['name']}</td><td>{e['type']}</td><td>{e['change']}</td></tr>" for e in d["excluded"])
@@ -467,12 +500,13 @@ def _html(data, xml_name):
         sh = ", ".join(s["safe_harbours"]) or "—"
         sumr += (f"<tr><td><strong>{s['jurisdiction'] or '—'}</strong></td>"
                  f"<td>{_etr_badge(s['etr_code'])}</td>"
+                 f"<td><small>{s['rec_jur']}</small></td>"
                  f"<td><small>{sh}</small></td>"
                  f"<td>{s['qdmtt_ut']}</td>"
                  f"<td>{s['globe_ut']}</td>"
                  f"<td>{s['sbie_na']} / {s['sbie_notut']}</td>"
                  f"<td>{s['doc_type']}</td></tr>")
-    html_sum = tbl(sumr, ["Giurisdizione", "ETR Range", "Safe Harbour", "QDMTTut", "GloBETut", "SBIE (NA/NoTuT)", "DocType"])
+    html_sum = tbl(sumr, ["Giurisdizione", "ETR Range", "RecJurCode", "Safe Harbour", "QDMTTut", "GloBETut", "SBIE (NA/NoTuT)", "DocType"])
 
     # ── Jurisdiction Sections ──
     jcards = ""

@@ -193,20 +193,39 @@
     "GIR2720": "Decrease by Excess Neg Tax Carry-forward – Art. 4.1.5 / 5.2.1"
   },
   "TYPE_INDIC": {
-    "OECD0":  "New data",
-    "OECD1":  "Resent data",
-    "OECD10": "Correction",
-    "OECD11": "Deletion",
-    "OECD13": "Corrected Correction"
+    "OECD0": "Resend Data",
+    "OECD1": "New Data",
+    "OECD2": "Corrected Data",
+    "OECD3": "Deletion of Data",
+    "OECD10": "Resend Test Data",
+    "OECD11": "New Test Data",
+    "OECD12": "Corrected Test Data",
+    "OECD13": "Deletion of Test Data"
   },
   "EXC_LABELS": {
-    "TransitionalCbCRSafeHarbour":   "Transitional CbCR Safe Harbour",
-    "Deminimis-SimplifiedNMCECalc":  "De minimis / Simplified NMCE Calculation",
-    "UTPRSafeHarbour":               "UTPR Safe Harbour"
+    "TransitionalCbCRSafeHarbour": "Transitional CbCR Safe Harbour",
+    "Deminimis-SimplifiedNMCECalc": "De minimis / Simplified NMCE Calculation",
+    "UTPRSafeHarbour": "UTPR Safe Harbour"
   },
   "ETR_BADGE": {
-    "danger":  ["GIR1301","GIR1302","GIR1303","GIR1304","GIR1305"],
-    "warning": ["GIR1306"],
-    "ok":      ["GIR1307","GIR1308","GIR1309","GIR1310","GIR1311","GIR1312","GIR1313"]
-}
+    "danger": [
+      "GIR1301",
+      "GIR1302",
+      "GIR1303",
+      "GIR1304",
+      "GIR1305"
+    ],
+    "warning": [
+      "GIR1306"
+    ],
+    "ok": [
+      "GIR1307",
+      "GIR1308",
+      "GIR1309",
+      "GIR1310",
+      "GIR1311",
+      "GIR1312",
+      "GIR1313"
+    ]
+  }
 }
