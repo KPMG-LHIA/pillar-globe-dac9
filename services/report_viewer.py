@@ -353,6 +353,7 @@ def parse_globe(xml_path):
 
         jurisdictions.append({
             "jurisdiction": _g(js, "globe:Jurisdiction") or "",
+            "rec_jur":      ", ".join(_ga(js, "globe:RecJurCode")) or "—",
             "currency":     cur,
             "doc_type":     lk(TYPE_INDIC, _g(ds3, "stf:DocTypeIndic")),
             "jur_taxing":   _ga(js.find("globe:JurWithTaxingRights", NS), "globe:JurisdictionName") if js.find("globe:JurWithTaxingRights", NS) is not None else [],
@@ -460,7 +461,7 @@ def _html(data, xml_name):
           row("Standard contabile (FAS)", fi["fas"]) +
           row("CFSofUPE", fi["cfs"]) +
           (row("Informazioni aggiuntive", fi["add_info"]) if fi.get("add_info") else "") +
-          (row("Giurisdizioni destinatarie (RecJurCode)", fi["rec_jur"]) if fi.get("rec_jur") else ""))
+          (row("Giurisdizioni destinatarie", fi["rec_jur"]) if fi.get("rec_jur") else ""))
     mr = (row("MessageTypeIndic", f'<span class="{msg_type_class}">{ms["type_indic"]}</span>') +
           row("MessageRefId", ms["ref_id"]) +
           row("Timestamp", ms["timestamp"]) +
@@ -506,7 +507,7 @@ def _html(data, xml_name):
                  f"<td>{s['globe_ut']}</td>"
                  f"<td>{s['sbie_na']} / {s['sbie_notut']}</td>"
                  f"<td>{s['doc_type']}</td></tr>")
-    html_sum = tbl(sumr, ["Giurisdizione", "ETR Range", "RecJurCode", "Safe Harbour", "QDMTTut", "GloBETut", "SBIE (NA/NoTuT)", "DocType"])
+    html_sum = tbl(sumr, ["Giurisdizione", "ETR Range", "Giurisdizioni destinatarie", "Safe Harbour", "QDMTTut", "GloBETut", "SBIE (NA/NoTuT)", "DocType"])
 
     # ── Jurisdiction Sections ──
     jcards = ""
@@ -522,6 +523,10 @@ def _html(data, xml_name):
             return r
 
         # ETRException (Safe Harbour / No ETRComputation)
+        rj_h = ""
+        if j.get("rec_jur") and j["rec_jur"] != "—":
+            rj_h = card("Info Giurisdizione", tbl(row("Giurisdizioni destinatarie", j["rec_jur"])))
+
         exc_h = ""
         if j.get("etr_exception"):
             EXC_LABELS = _CODES["EXC_LABELS"]
@@ -627,7 +632,7 @@ def _html(data, xml_name):
           </div>
           <div class="jbody">
             <div class="g2">
-              <div>{exc_h}{card("Overall Computation", tbl(ov_rows)) if ov_rows else ""}{sub_h}</div>
+              <div>{rj_h}{exc_h}{card("Overall Computation", tbl(ov_rows)) if ov_rows else ""}{sub_h}</div>
               <div>{qd_h}{en_h}{ce_h}{el_h}{ltj_h}</div>
             </div>
           </div>
