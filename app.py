@@ -174,15 +174,24 @@ def run_pipeline(jid, items):
     perché lxml/openpyxl lavorano su filesystem), processato, e gli output
     vengono ricaricati sullo storage persistente. La cartella temporanea
     viene distrutta a fine job: nessun dato residuo sul filesystem effimero.
-    """
-    from services.xml_validator import validate
-    from services.shell_telematico import encapsulate
-    from services.report_viewer import generate_report
 
-    update_job(jid, status="RUNNING")
+    NOTA (2026-07): import dei tre moduli e update_job(RUNNING) spostati
+    dentro il try/except. Prima erano fuori: se l'import falliva (es. deploy
+    Kudu non atomico che lascia temporaneamente un services/*.py incoerente,
+    o un errore di sintassi introdotto per sbaglio), l'eccezione non veniva
+    mai catturata, il thread daemon moriva silenziosamente e il job restava
+    bloccato per sempre a PENDING/RUNNING — con il frontend in polling
+    infinito ("resta in caricamento"). Ora qualsiasi fallimento, incluso
+    quello a livello di import, marca il job FAILED con errore visibile.
+    """
     outputs = []
 
     try:
+        from services.xml_validator import validate
+        from services.shell_telematico import encapsulate
+        from services.report_viewer import generate_report
+
+        update_job(jid, status="RUNNING")
         with tempfile.TemporaryDirectory(prefix=f"pillar_{jid}_") as tmp:
             tmp_dir = Path(tmp)
 
