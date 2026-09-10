@@ -3,12 +3,20 @@ app.py - PILLAR GloBE/DAC9
 Flusso: apri sito → Microsoft login automatico → home upload
 Supporta upload multi-CF: ogni file XML può avere un CF fornitore differente.
 
-Hardening applicato (Maggio 2026):
+Hardening applicato (Maggio-Settembre 2026):
 - Storage persistente (Azure Blob Storage con fallback locale per dev) per
   file caricati, output pipeline, e stato dei job — risolve la perdita dati
   dovuta al filesystem effimero di App Service F1.
 - Logging strutturato su stream (raccolto da App Service log / App Insights
   se configurato) invece che solo su liste in RAM.
+- Session timeout 30 minuti, sliding (policy KPMG) + hardening cookie.
+- Fix CodeQL alert #4 "Flask app is run in debug mode": debug non più
+  hardcoded a True, condizionato da env var, default False.
+- Fix CodeQL alert #2/#3 "Uncontrolled data used in path expression": jid
+  arriva da parametri di route (input utente) e finiva nella costruzione di
+  path in services/storage.py senza validazione. La validazione ora vive in
+  storage.py (_validate_jid/_validate_blob_name); qui si intercetta il
+  ValueError che solleva e si risponde 404, senza esporre stacktrace.
 """
 import logging
 import os
@@ -54,7 +62,23 @@ if not app.secret_key:
     log.warning("FLASK_SECRET_KEY non impostata: generata a runtime "
                 "(le sessioni non sopravvivono a un riavvio). Impostarla "
                 "come App Setting persistente in produzione.")
-app.permanent_session_lifetime = timedelta(days=7)
+
+# Policy KPMG: timeout sessione 30 minuti di inattività (sliding: si rinnova
+# ad ogni richiesta autenticata, vedi _refresh_session_timeout sotto).
+app.permanent_session_lifetime = timedelta(minutes=30)
+app.config.update(
+    SESSION_COOKIE_SECURE=True,     # cookie inviato solo su HTTPS
+    SESSION_COOKIE_HTTPONLY=True,   # non accessibile da JS lato client
+    SESSION_COOKIE_SAMESITE="Lax",
+)
+
+@app.before_request
+def _refresh_session_timeout():
+    # session.permanent + session.modified ad ogni richiesta rende il
+    # timeout "sliding" (30 min dall'ultima attività), non un timeout
+    # assoluto fisso dal momento del login.
+    session.permanent = True
+    session.modified = True
 
 # ── Auth helpers ─────────────────────────────────────────────────────────────
 
@@ -163,7 +187,16 @@ def log_job(jid, msg):
     log.info("[job %s] %s", jid, msg)
 
 def get_job(jid):
-    return storage.load_job(jid)
+    """Restituisce None sia se il job non esiste sia se jid non è un UUID
+    valido (storage._validate_jid solleva ValueError in quel caso) — le
+    route trattano entrambi i casi come 404, senza distinguerli verso il
+    client (non si vuole dare un segnale diverso a chi sta provando a
+    indovinare/manomettere l'id)."""
+    try:
+        return storage.load_job(jid)
+    except ValueError:
+        log.warning("jid non valido ricevuto in una route: %r", jid)
+        return None
 
 # ── Pipeline worker ───────────────────────────────────────────────────────────
 
@@ -316,16 +349,33 @@ def download(jid, filename):
         (o["blob"] for o in j["outputs"] if o["filename"] == filename),
         None,
     )
-    if not target or not storage.exists(target):
+    if not target:
         abort(404)
-    log.info("Download: job=%s file=%s user=%s", jid, filename,
-              (session.get("user") or {}).get("email"))
-    return send_file(
-        storage.open_read(target),
-        as_attachment=True,
-        download_name=filename,
-    )
+    try:
+        if not storage.exists(target):
+            abort(404)
+        log.info("Download: job=%s file=%s user=%s", jid, filename,
+                  (session.get("user") or {}).get("email"))
+        return send_file(
+            storage.open_read(target),
+            as_attachment=True,
+            download_name=filename,
+        )
+    except ValueError:
+        # target è costruito internamente da app.py, mai da input utente
+        # diretto — ma per difesa in profondità un blob_name che fallisse
+        # comunque la validazione di storage.py viene trattato come 404,
+        # non come errore interno.
+        log.warning("blob_name non valido in download: %r", target)
+        abort(404)
 
 if __name__ == "__main__":
-    print(f"\n  PILLAR | Auth: {'MSAL Azure AD' if CLIENT_ID else 'BYPASS locale'} | http://127.0.0.1:5000\n")
-    app.run(debug=True, host="0.0.0.0", port=5000)
+    # Fix CodeQL #4 "Flask app is run in debug mode": debug non è più
+    # hardcoded a True. Va abilitato esplicitamente in locale con
+    # FLASK_DEBUG=1; su App Service resta sempre False (e comunque questo
+    # blocco non viene eseguito in produzione, dove gunicorn importa `app`
+    # senza passare da __main__).
+    debug_mode = os.getenv("FLASK_DEBUG", "0") == "1"
+    print(f"\n  PILLAR | Auth: {'MSAL Azure AD' if CLIENT_ID else 'BYPASS locale'} | "
+          f"Debug: {debug_mode} | http://127.0.0.1:5000\n")
+    app.run(debug=debug_mode, host="0.0.0.0", port=5000)
