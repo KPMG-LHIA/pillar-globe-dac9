@@ -162,15 +162,16 @@ def auth_logout():
 
 _JOB_LOCK = threading.Lock()  # serializza le scritture concorrenti sullo stesso job
 
-def new_job(files):
+def new_job(files, owner_email=None):
     jid = str(uuid.uuid4())
     job = {
         "status": "PENDING", "files": files,
         "outputs": [], "log": [], "error": None,
         "t0": time.time(), "t1": None,
+        "owner": (owner_email or "").lower(),
     }
     storage.save_job(jid, job)
-    log.info("Job creato: %s (%d file)", jid, len(files))
+    log.info("Job creato: %s (%d file, owner=%s)", jid, len(files), job["owner"])
     return jid
 
 def update_job(jid, **kw):
@@ -197,6 +198,17 @@ def get_job(jid):
     except ValueError:
         log.warning("jid non valido ricevuto in una route: %r", jid)
         return None
+
+def _is_job_owner(job) -> bool:
+    """Punto 6 audit (export sicuri): un job creato prima di questa modifica
+    non ha "owner" salvato (retrocompatibilità) — in quel caso non si nega
+    l'accesso per non rompere i job già in corso al momento del deploy, ma
+    ogni job creato da ora in poi lo richiede sempre."""
+    owner = (job or {}).get("owner")
+    if not owner:
+        return True
+    current = (session.get("user") or {}).get("email", "").lower()
+    return current == owner
 
 # ── Pipeline worker ───────────────────────────────────────────────────────────
 
@@ -315,7 +327,8 @@ def upload():
     if not items:
         return jsonify({"error": "Nessun file valido"}), 400
 
-    jid = new_job([{"name": n} for n in saved_names])
+    owner_email = (session.get("user") or {}).get("email", "")
+    jid = new_job([{"name": n} for n in saved_names], owner_email=owner_email)
     threading.Thread(
         target=run_pipeline,
         args=(jid, items),
@@ -329,6 +342,10 @@ def status(jid):
     j = get_job(jid)
     if not j:
         return jsonify({"error": "Job non trovato"}), 404
+    if not _is_job_owner(j):
+        log.warning("Accesso status negato: job=%s richiesto da user=%s (owner diverso)",
+                     jid, (session.get("user") or {}).get("email"))
+        abort(404)  # 404 anziché 403: non si conferma l'esistenza del job ad altri utenti
     elapsed = round(j["t1"] - j["t0"], 1) if j.get("t1") else None
     return jsonify({
         "job_id": jid,
@@ -345,6 +362,10 @@ def download(jid, filename):
     j = get_job(jid)
     if not j:
         abort(404)
+    if not _is_job_owner(j):
+        log.warning("Accesso download negato: job=%s file=%s richiesto da user=%s (owner diverso)",
+                     jid, filename, (session.get("user") or {}).get("email"))
+        abort(404)
     target = next(
         (o["blob"] for o in j["outputs"] if o["filename"] == filename),
         None,
@@ -356,11 +377,17 @@ def download(jid, filename):
             abort(404)
         log.info("Download: job=%s file=%s user=%s", jid, filename,
                   (session.get("user") or {}).get("email"))
-        return send_file(
+        resp = send_file(
             storage.open_read(target),
             as_attachment=True,
             download_name=filename,
         )
+        # Punto 6 audit (export sicuri): i file contengono dati fiscali
+        # sensibili (CF, importi GloBE) — impedisce che browser/proxy
+        # intermedi li mettano in cache, recuperabili anche dopo logout.
+        resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, private"
+        resp.headers["Pragma"] = "no-cache"
+        return resp
     except ValueError:
         # target è costruito internamente da app.py, mai da input utente
         # diretto — ma per difesa in profondità un blob_name che fallisse
